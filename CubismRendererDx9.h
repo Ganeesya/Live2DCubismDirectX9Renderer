@@ -1,11 +1,11 @@
 #pragma once
-#include "src\LAppTextureDesc.h"
-#include "framework\L2DModelMatrix.h"
-#include "OWFramework\src\CubismFramework.hpp"
-#include "OWFramework\src\Model\CubismModel.hpp"
-#include "OWFramework\src\Rendering\CubismRenderer.hpp"
-#include "OWFramework\src\Id\CubismIdManager.hpp"
-#include "OWFramework\src\Model\CubismModelUserData.hpp"
+#include "../src\LAppTextureDesc.h"
+#include "../framework\L2DModelMatrix.h"
+#include "../OWFramework\src\CubismFramework.hpp"
+#include "../OWFramework\src\Model\CubismModel.hpp"
+#include "../OWFramework\src\Rendering\CubismRenderer.hpp"
+#include "../OWFramework\src\Id\CubismIdManager.hpp"
+#include "../OWFramework\src\Model\CubismModelUserData.hpp"
 
 
 using namespace Live2DC3::Cubism::Framework;
