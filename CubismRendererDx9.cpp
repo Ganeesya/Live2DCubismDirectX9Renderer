@@ -123,6 +123,200 @@ void CubismRendererDx9::DrawModel()
 	RestoreProfile();
 }
 
+bool HitId(csmVector<CubismIdHandle>& ids, CubismIdHandle& target) {
+	for (auto i = ids.Begin(); i != ids.End(); i++) {
+		if (*i == target) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CubismRendererDx9::DrawMasking(
+							bool selected,
+							int mode,
+							csmVector<CubismIdHandle>& ids) 
+{
+	// マスキング設定のRenderingSettingへの反映
+
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+	{
+		CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
+		if (selected) {
+			MakeMaskingMode set = MakeMaskingMode::Skip;
+			switch (mode)
+			{
+			case MASKING_MODE_USERDATA_STRAITE:
+				if (_drawable[i]->HaveElements(ids)){
+					set = MakeMaskingMode::DrawMask;
+				}
+				else {
+					set = MakeMaskingMode::EraseMask;
+				}
+				break;
+			case MASKING_MODE_USERDATA_INVERT:
+				if (_drawable[i]->HaveElements(ids)) {
+					set = MakeMaskingMode::EraseMask;
+				}
+				else{
+					set = MakeMaskingMode::DrawMask;
+				}
+				break;
+			case MASKING_MODE_USERDATA_SKIP:
+				if (_drawable[i]->HaveElements(ids)) {
+					set = MakeMaskingMode::Skip;
+				}
+				else{
+					set = MakeMaskingMode::DrawMask;
+				}
+				break;
+			case MASKING_MODE_USERDATA_SKIP_INVERT:
+				if (_drawable[i]->HaveElements(ids)) {
+					set = MakeMaskingMode::DrawMask;
+				}
+				else{
+					set = MakeMaskingMode::Skip;
+				}
+				break;
+
+
+			case MASKING_MODE_ID_STRAITE:
+				if (HitId(ids, drawableId)){
+					set = MakeMaskingMode::DrawMask;
+				}
+				else{
+					set = MakeMaskingMode::EraseMask;
+				}
+				break;
+			case MASKING_MODE_ID_INVERT:
+				if (HitId(ids, drawableId)) {
+					set = MakeMaskingMode::EraseMask;
+				}
+				else {
+					set = MakeMaskingMode::DrawMask;
+				}
+				break;
+			case MASKING_MODE_ID_SKIP:
+				if (HitId(ids, drawableId)) {
+					set = MakeMaskingMode::DrawMask;
+				}
+				else {
+					set = MakeMaskingMode::Skip;
+				}
+				break;
+			case MASKING_MODE_ID_SKIP_INVERT:
+				if (HitId(ids, drawableId)) {
+					set = MakeMaskingMode::Skip;
+				}
+				else {
+					set = MakeMaskingMode::DrawMask;
+				}
+				break;
+			default:
+				break;
+			}
+			_drawable[i]->SetMaskingType(set);
+		}
+	}
+
+	// DXプロファイル保存
+	SaveProfile();
+	
+
+	// 描画系処理　↓
+	// マトリクス調整
+	D3DXMATRIXA16 view;
+	V(g_dev->GetTransform(D3DTS_VIEW, &view));
+	D3DXMATRIXA16 projection;
+	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
+
+	D3DXMATRIXA16 mmvp;
+
+	csmVector2 origin, size;
+	float ppu;
+	csmReadCanvasInfo(GetModel()->GetModel(), &size, &origin, &ppu);
+	D3DXMatrixMultiply(&mmvp, &projection, &view);
+	D3DXMATRIXA16 modelMat(_mtrx->getArray());
+	D3DXMATRIXA16 normalizeMat;
+	D3DXMatrixIdentity(&normalizeMat);
+	normalizeMat._11 *= -1;
+	normalizeMat._41 += origin.X / ppu;
+	normalizeMat._42 -= origin.Y / ppu;
+	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+
+
+	//vertecx update
+	UpdateVertexs();
+	
+	// テクスチャ関連付け
+	for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
+	{
+		_nowTexture[i] = _textures[i]->getNowTex();
+	}
+
+	// 頂点転送
+	V(g_dev->SetIndices(_indice));
+	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+
+	V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
+
+	// 描画順序ソート
+	csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
+
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+	{
+		sort[GetModel()->GetDrawableRenderOrders()[i]] = _drawable[i];
+	}
+
+	// Turn off D3D lighting
+	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+
+	// Drawable描画
+	int xxx = 0;
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
+	{
+		if (!GetModel()->IsVisibleDrawable(sort[i]->GetDrawableIndex()))
+		{
+			sort[i]->GetDiffuse();
+			continue;
+		}
+		float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
+		if (sort[i]->GetMaskCount() > 0)
+		{
+			MakeMask(sort[i]->GetDrawableIndex());
+
+			V(g_effect->SetTexture("Mask", g_maskTexture));
+
+			V(g_effect->SetTechnique("RenderMaskingMasked"));
+		}
+		else
+		{
+			V(g_effect->SetTechnique("RenderMaskingNoMask"));
+		}
+
+
+		V(g_effect->SetFloat("drawableOpacity", opa));
+		D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
+		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+
+		int texnum = sort[i]->GetTextureIndex();
+		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
+		V(g_effect->SetTexture("TexMain", tex));
+
+		UINT32	xxxx;
+		V(g_effect->Begin(&xxxx, 0));
+		V(g_effect->BeginPass(0));
+		sort[i]->DrawMaskingMesh(g_dev);
+		V(g_effect->EndPass());
+		V(g_effect->End());
+	}
+
+	// DXプロファイル復元
+	RestoreProfile();
+}
+
 bool CubismRendererDx9::AddTexture(const char * filepath)
 {
 	LPDIRECT3DTEXTURE9 newtex;
@@ -470,6 +664,41 @@ void DrawableShaderSetting::DrawMask(LPDIRECT3DDEVICE9 dev)
 	V(dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3));
 }
 
+void DrawableShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
+{
+	if (nonCulling)
+	{
+		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE));
+	}
+	else
+	{
+		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));//D3DCULL_CCW
+	}
+
+	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	switch (maskingType)
+	{
+	case MakeMaskingMode::Skip:
+		return;
+	case MakeMaskingMode::EraseMask:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+		break;
+	case MakeMaskingMode::DrawMask:
+	default:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+		break;
+	}
+
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
+}
+
 int DrawableShaderSetting::GetMaskCount()
 {
 	return masks.GetSize();
@@ -514,6 +743,20 @@ bool DrawableShaderSetting::HaveElement(CubismIdHandle ele)
 	return false;
 }
 
+bool DrawableShaderSetting::HaveElements(csmVector<CubismIdHandle>& elements)
+{
+	for (csmUint32 i = 0; i < userdataElements.GetSize(); ++i)
+	{
+		for (csmUint32 j = 0; j < elements.GetSize(); ++j) {
+			if (userdataElements[i] == elements[j])
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 void DrawableShaderSetting::AddElements(const csmString & userDataValue)
 {
 	char buffer[128];
@@ -538,7 +781,6 @@ void DrawableShaderSetting::AddElements(const csmString & userDataValue)
 	buffer[bufferPos] = '\0';
 	userdataElements.PushBack(CubismFramework::GetIdManager()->GetId(buffer));
 }
-
 
 CubismRenderer* CubismRenderer::Create()
 {

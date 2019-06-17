@@ -1,4 +1,5 @@
 #pragma once
+#include "ipc_common.h"
 #include "../src\LAppTextureDesc.h"
 #include "../framework\L2DModelMatrix.h"
 #include "../OWFramework\src\CubismFramework.hpp"
@@ -52,6 +53,13 @@ static int CompareSortableDrawables(const void *a, const void *b)
 	return (drawableA->RenderOrderIndex > drawableB->RenderOrderIndex) - (drawableA->RenderOrderIndex < drawableB->RenderOrderIndex);
 }
 
+enum MakeMaskingMode
+{
+	DrawMask,
+	EraseMask,
+	Skip
+};
+
 class DrawableShaderSetting
 {
 public:	
@@ -64,6 +72,8 @@ public:
 	void DrawMesh(LPDIRECT3DDEVICE9 dev);
 
 	void DrawMask(LPDIRECT3DDEVICE9 dev);
+
+	void DrawMaskingMesh(LPDIRECT3DDEVICE9 dev);
 
 	int GetMaskCount();
 
@@ -79,7 +89,13 @@ public:
 
 	bool HaveElement(CubismIdHandle ele);
 
+	bool HaveElements(csmVector<CubismIdHandle>& elements);
+
 	void AddElements(const csmString& userDataValue);
+
+	void SetMaskingType(MakeMaskingMode set) {
+		maskingType = set;
+	}
 
 private:
 	
@@ -94,6 +110,7 @@ private:
 	csmVector<int> masks;
 
 	Rendering::CubismRenderer::CubismBlendMode drawtype;
+	MakeMaskingMode maskingType;
 	bool nonCulling;
 
 	D3DXCOLOR diffuse;
@@ -122,6 +139,8 @@ public:
 	*
 	*/
 	void DrawModel();
+	
+	void DrawMasking(bool selected, int mode, csmVector<CubismIdHandle>& ids);
 
 	bool AddTexture(const char* filepath);
 
