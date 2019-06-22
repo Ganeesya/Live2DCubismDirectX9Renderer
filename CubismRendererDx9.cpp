@@ -139,84 +139,35 @@ void CubismRendererDx9::DrawMasking(
 {
 	// マスキング設定のRenderingSettingへの反映
 
+	if (!selected) return;
+
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
 	{
 		CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
-		if (selected) {
-			MakeMaskingMode set = MakeMaskingMode::Skip;
-			switch (mode)
-			{
-			case MASKING_MODE_USERDATA_STRAITE:
-				if (_drawable[i]->HaveElements(ids)){
-					set = MakeMaskingMode::DrawMask;
-				}
-				else {
-					set = MakeMaskingMode::EraseMask;
-				}
-				break;
-			case MASKING_MODE_USERDATA_INVERT:
-				if (_drawable[i]->HaveElements(ids)) {
-					set = MakeMaskingMode::EraseMask;
-				}
-				else{
-					set = MakeMaskingMode::DrawMask;
-				}
-				break;
-			case MASKING_MODE_USERDATA_SKIP:
-				if (_drawable[i]->HaveElements(ids)) {
-					set = MakeMaskingMode::Skip;
-				}
-				else{
-					set = MakeMaskingMode::DrawMask;
-				}
-				break;
-			case MASKING_MODE_USERDATA_SKIP_INVERT:
-				if (_drawable[i]->HaveElements(ids)) {
-					set = MakeMaskingMode::DrawMask;
-				}
-				else{
-					set = MakeMaskingMode::Skip;
-				}
-				break;
+		bool isFit = false;
 
-
-			case MASKING_MODE_ID_STRAITE:
-				if (HitId(ids, drawableId)){
-					set = MakeMaskingMode::DrawMask;
-				}
-				else{
-					set = MakeMaskingMode::EraseMask;
-				}
-				break;
-			case MASKING_MODE_ID_INVERT:
-				if (HitId(ids, drawableId)) {
-					set = MakeMaskingMode::EraseMask;
-				}
-				else {
-					set = MakeMaskingMode::DrawMask;
-				}
-				break;
-			case MASKING_MODE_ID_SKIP:
-				if (HitId(ids, drawableId)) {
-					set = MakeMaskingMode::DrawMask;
-				}
-				else {
-					set = MakeMaskingMode::Skip;
-				}
-				break;
-			case MASKING_MODE_ID_SKIP_INVERT:
-				if (HitId(ids, drawableId)) {
-					set = MakeMaskingMode::Skip;
-				}
-				else {
-					set = MakeMaskingMode::DrawMask;
-				}
-				break;
-			default:
-				break;
-			}
-			_drawable[i]->SetMaskingType(set);
+		if ( (mode & MASKING_MODE_ID_FIT_FLAG) != 0 ) {
+			isFit |= HitId(ids, drawableId);
 		}
+		if ( (mode & MASKING_MODE_USERDATA_FIT_FLAG) != 0 ) {
+			isFit |= _drawable[i]->HaveElements(ids);
+		}
+
+		if ( (mode & MASKING_MODE_FITTING_MEAN_INVERT) != 0 ) {
+			isFit = !isFit;
+		}
+
+		MakeMaskingMode set = MakeMaskingMode::DrawMask;
+
+		if (!isFit) {
+			if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
+				set = MakeMaskingMode::Skip;
+			}
+			else {
+				set = MakeMaskingMode::EraseMask;
+			}
+		}
+		_drawable[i]->SetMaskingType(set);
 	}
 
 	// DXプロファイル保存
