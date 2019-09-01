@@ -157,17 +157,17 @@ void CubismRendererDx9::DrawMasking(
 			isFit = !isFit;
 		}
 
-		MakeMaskingMode set = MakeMaskingMode::DrawMask;
+		DrawingMaskingMode set = DrawingMaskingMode::DrawMask;
 
 		if (!isFit) {
 			if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
-				set = MakeMaskingMode::Skip;
+				set = DrawingMaskingMode::Skip;
 			}
 			else {
-				set = MakeMaskingMode::EraseMask;
+				set = DrawingMaskingMode::EraseMask;
 			}
 		}
-		_drawable[i]->SetMaskingType(set);
+		_drawable[i]->SetDrawingMaskingType(set);
 	}
 
 	// DXプロファイル保存
@@ -228,7 +228,7 @@ void CubismRendererDx9::DrawMasking(
 	int xxx = 0;
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
 	{
-		if (!GetModel()->IsVisibleDrawable(sort[i]->GetDrawableIndex()))
+		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
 		{
 			sort[i]->GetDiffuse();
 			continue;
@@ -241,6 +241,7 @@ void CubismRendererDx9::DrawMasking(
 			V(g_effect->SetTexture("Mask", g_maskTexture));
 
 			V(g_effect->SetTechnique("RenderMaskingMasked"));
+			V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
 		}
 		else
 		{
@@ -420,7 +421,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	int xxx = 0;
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
 	{
-		if (!GetModel()->IsVisibleDrawable(sort[i]->GetDrawableIndex()))
+		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
 		{
 			sort[i]->GetDiffuse();
 			continue;
@@ -434,6 +435,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 			V(g_effect->SetTexture("Mask", g_maskTexture));
 
 			V(g_effect->SetTechnique("RenderSceneMasked"));
+			V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
 		}
 		else
 		{
@@ -503,7 +505,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 		 {
 			 continue;
 		 }
-		 if (!GetModel()->DidUpdateDrawableVertexPositions(targetIndex))
+		 if (!GetModel()->GetDrawableDynamicFlagVertexPositionsDidChange(targetIndex))
 		 {
 			 continue;
 		 }
@@ -549,6 +551,7 @@ void DrawableShaderSetting::Initialize(CubismModel* model, int drawindex, int & 
 	indiceCountStack += indiceCount;
 
 	masks.Resize(model->GetDrawableMaskCounts()[drawableIndex]);
+	isInvertMask = true;
 	for (csmUint32 i = 0; i < masks.GetSize(); ++i)
 	{
 		masks[i] = model->GetDrawableMasks()[drawableIndex][i];
@@ -630,15 +633,15 @@ void DrawableShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
 	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
 	switch (maskingType)
 	{
-	case MakeMaskingMode::Skip:
+	case DrawingMaskingMode::Skip:
 		return;
-	case MakeMaskingMode::EraseMask:
+	case DrawingMaskingMode::EraseMask:
 		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO));
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
 		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
 		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
 		break;
-	case MakeMaskingMode::DrawMask:
+	case DrawingMaskingMode::DrawMask:
 	default:
 		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));//D3DCULL_CCW
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));

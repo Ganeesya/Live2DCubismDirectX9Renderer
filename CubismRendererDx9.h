@@ -53,7 +53,7 @@ static int CompareSortableDrawables(const void *a, const void *b)
 	return (drawableA->RenderOrderIndex > drawableB->RenderOrderIndex) - (drawableA->RenderOrderIndex < drawableB->RenderOrderIndex);
 }
 
-enum MakeMaskingMode
+enum DrawingMaskingMode
 {
 	DrawMask,
 	EraseMask,
@@ -93,8 +93,13 @@ public:
 
 	void AddElements(const csmString& userDataValue);
 
-	void SetMaskingType(MakeMaskingMode set) {
+	void SetDrawingMaskingType(DrawingMaskingMode set) {
 		maskingType = set;
+	}
+
+	bool GetIsInvertMask() const
+	{
+		return isInvertMask;
 	}
 
 private:
@@ -108,9 +113,10 @@ private:
 	int textureIndex;
 
 	csmVector<int> masks;
+	bool isInvertMask;
 
 	Rendering::CubismRenderer::CubismBlendMode drawtype;
-	MakeMaskingMode maskingType;
+	DrawingMaskingMode maskingType;
 	bool nonCulling;
 
 	D3DXCOLOR diffuse;
