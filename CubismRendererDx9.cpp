@@ -551,7 +551,7 @@ void DrawableShaderSetting::Initialize(CubismModel* model, int drawindex, int & 
 	indiceCountStack += indiceCount;
 
 	masks.Resize(model->GetDrawableMaskCounts()[drawableIndex]);
-	isInvertMask = true;
+	isInvertMask = model->GetDrawableInvertedMask(drawableIndex);
 	for (csmUint32 i = 0; i < masks.GetSize(); ++i)
 	{
 		masks[i] = model->GetDrawableMasks()[drawableIndex][i];

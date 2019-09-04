@@ -189,7 +189,7 @@ protected:
 	*/
 	virtual void DrawMesh(csmInt32 textureNo, csmInt32 indexCount, csmInt32 vertexCount
 		, csmUint16* indexArray, csmFloat32* vertexArray, csmFloat32* uvArray
-		, csmFloat32 opacity, CubismBlendMode colorBlendMode)
+		, csmFloat32 opacity, CubismBlendMode colorBlendMode, csmBool invertedMask)
 	{
 
 	}
