@@ -178,23 +178,26 @@ void CubismRendererDx9::DrawMasking(
 	// マトリクス調整
 	D3DXMATRIXA16 view;
 	V(g_dev->GetTransform(D3DTS_VIEW, &view));
+
 	D3DXMATRIXA16 projection;
 	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
 
 	D3DXMATRIXA16 mmvp;
+	D3DXMatrixIdentity(&mmvp);
 
-	csmVector2 origin, size;
-	float ppu;
-	csmReadCanvasInfo(GetModel()->GetModel(), &size, &origin, &ppu);
-	D3DXMatrixMultiply(&mmvp, &projection, &view);
 	D3DXMATRIXA16 modelMat(_mtrx->getArray());
+
 	D3DXMATRIXA16 normalizeMat;
 	D3DXMatrixIdentity(&normalizeMat);
 	normalizeMat._11 *= -1;
-	normalizeMat._41 += origin.X / ppu;
-	normalizeMat._42 -= origin.Y / ppu;
+	normalizeMat._41 += 0.5;
+	normalizeMat._42 -= 0.5;
+
 	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
 	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &view);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
+
 	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
 
 
@@ -373,23 +376,26 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 {
 	D3DXMATRIXA16 view;
 	V(g_dev->GetTransform(D3DTS_VIEW, &view));
+
 	D3DXMATRIXA16 projection;
 	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
 
 	D3DXMATRIXA16 mmvp;
+	D3DXMatrixIdentity(&mmvp);
 
-	csmVector2 origin, size;
-	float ppu;
-	csmReadCanvasInfo(GetModel()->GetModel(), &size, &origin, &ppu);
-	D3DXMatrixMultiply(&mmvp, &projection, &view);
 	D3DXMATRIXA16 modelMat(_mtrx->getArray());
+	
 	D3DXMATRIXA16 normalizeMat;
 	D3DXMatrixIdentity(&normalizeMat);
 	normalizeMat._11 *= -1;
-	normalizeMat._41 += origin.X / ppu;
-	normalizeMat._42 -= origin.Y / ppu;
+	normalizeMat._41 += 0.5;
+	normalizeMat._42 -= 0.5;
+
 	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
 	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &view);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
+
 	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
 
 
