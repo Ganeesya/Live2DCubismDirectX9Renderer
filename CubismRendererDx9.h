@@ -84,6 +84,10 @@ public:
 	int GetMask(int i);
 
 	D3DXCOLOR GetDiffuse();
+	
+	D3DXCOLOR GetMultipleColor();
+	
+	D3DXCOLOR GetScreenColor();
 
 	void MixDiffuseColor(float opa, float r, float g, float b, float a);
 

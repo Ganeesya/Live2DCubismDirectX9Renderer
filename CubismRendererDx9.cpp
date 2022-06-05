@@ -457,6 +457,13 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
 		V(g_effect->SetTexture("TexMain", tex));
 
+		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
+		V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
+		csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
+		V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
+		
 		UINT32	xxxx;
 		V(g_effect->Begin(&xxxx, 0));
 		V(g_effect->BeginPass(0));
