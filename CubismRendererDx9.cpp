@@ -28,6 +28,9 @@ CubismRendererDx9::~CubismRendererDx9()
 	{
 		delete _drawable[i];
 	}
+
+	if (_vertex) { _vertex->Release(); _vertex = NULL; }
+	if (_indice) { _indice->Release(); _indice = NULL; }
 }
 
 /**
@@ -535,6 +538,8 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	 V(g_dev->EndScene());
 
 	 V(g_dev->SetRenderTarget(0, preRenderSurface));
+
+	 preRenderSurface->Release();
 
 	 V(g_dev->BeginScene());
  }
