@@ -1,5 +1,13 @@
-#include "CubismRendererDx9.h"
+ï»¿#include "CubismRendererDx9.h"
+#include <algorithm>
 
+// CubismRenderer é™çš„ãƒ•ã‚¡ã‚¯ãƒˆãƒªå®Ÿè£…ï¼ˆãƒªãƒ³ã‚¯ã‚¨ãƒ©ãƒ¼å¯¾ç­–ï¼‰
+Live2DC3::Cubism::Framework::Rendering::CubismRenderer* Live2DC3::Cubism::Framework::Rendering::CubismRenderer::Create(csmUint32 width, csmUint32 height)
+{
+	CubismRendererDx9* r = CubismRendererDx9::Create(width, height);
+	r->SetRenderTargetSize(width, height);
+	return r;
+}
 
 
 LPDIRECT3DDEVICE9	CubismRendererDx9::g_dev = NULL;
@@ -7,12 +15,128 @@ LPDIRECT3DTEXTURE9	CubismRendererDx9::g_maskTexture = NULL;
 LPDIRECT3DSURFACE9	CubismRendererDx9::g_maskSurface = NULL;
 LPD3DXEFFECT		CubismRendererDx9::g_effect = NULL;
 
-CubismRendererDx9 * CubismRendererDx9::Create()
+// ç¾åœ¨ Begin ä¸­ã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã‚’è¿½è·¡ï¼ˆãƒ•ãƒ¬ãƒ¼ãƒ å†…ï¼‰
+static csmInt32 s_ActiveOffscreenIndex = -1;
+
+// ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã®å†…å®¹ã‚’è»¢å†™ï¼ˆSRCALPHAè€ƒæ…®ï¼‰
+static void TransferOffscreenBuffer(
+	LPDIRECT3DDEVICE9 dev,
+	LPD3DXEFFECT effect,
+	csmVector<CubismOffscreenFrame_Dx9*>& buffers,
+	csmVector<OffscreenShaderSetting*>& settings,
+	csmInt32 srcIndex)
 {
-	return new CubismRendererDx9();
+	if (!dev || !effect) return;
+	if (srcIndex < 0 || srcIndex >= (csmInt32)buffers.GetSize()) return;
+	CubismOffscreenFrame_Dx9* srcOff = buffers[srcIndex];
+	if (!srcOff || !srcOff->IsValid()) return;
+	LPDIRECT3DTEXTURE9 srcTex = srcOff->GetTexture();
+	if (!srcTex) return;
+	// è»¢å†™å…ˆï¼ˆ-1 ã¯ç¾åœ¨ã®RTï¼‰
+	csmInt32 dstIndex = -1;
+	if (srcIndex < (csmInt32)settings.GetSize() && settings[srcIndex])
+	{
+		dstIndex = settings[srcIndex]->GetTransferOffscreenIndex();
+	}
+
+	// ã‚·ãƒ¼ãƒ³ã‚’ä¸€æ—¦çµ‚äº†ã—ã€RTåˆ‡æ›¿
+	V(dev->EndScene());
+
+	LPDIRECT3DSURFACE9 prevRT = nullptr;
+	V(dev->GetRenderTarget(0, &prevRT));
+	D3DVIEWPORT9 prevVP; V(dev->GetViewport(&prevVP));
+	D3DXMATRIXA16 prevWorld, prevView, prevProj;
+	V(dev->GetTransform(D3DTS_WORLD, &prevWorld));
+	V(dev->GetTransform(D3DTS_VIEW, &prevView));
+	V(dev->GetTransform(D3DTS_PROJECTION, &prevProj));
+	D3DXMATRIXA16 prevFxMvp; ZeroMemory(&prevFxMvp, sizeof(prevFxMvp));
+	effect->GetMatrix("g_mWorldViewProjection", &prevFxMvp);
+
+	// è»¢å†™å…ˆã‚µãƒ¼ãƒ•ã‚§ã‚¹æ±ºå®š
+	LPDIRECT3DSURFACE9 dstSurf = prevRT;
+	if (dstIndex >= 0 && dstIndex < (csmInt32)buffers.GetSize())
+	{
+		CubismOffscreenFrame_Dx9* dstOff = buffers[dstIndex];
+		if (dstOff && dstOff->IsValid())
+		{
+			dstSurf = dstOff->GetSurface();
+			if (dstSurf) { V(dev->SetRenderTarget(0, dstSurf)); }
+		}
+	}
+
+	// è»¢å†™å…ˆã«åˆã‚ã›ã¦ãƒ“ãƒ¥ãƒ¼ãƒãƒ¼ãƒˆè¨­å®š
+	D3DSURFACE_DESC dstDesc; dstSurf->GetDesc(&dstDesc);
+	D3DVIEWPORT9 vp; vp.X = 0; vp.Y = 0; vp.MinZ = 0.0f; vp.MaxZ = 1.0f; vp.Width = dstDesc.Width; vp.Height = dstDesc.Height;
+	V(dev->SetViewport(&vp));
+
+	// è¡Œåˆ—ã‚’ã‚¢ã‚¤ãƒ‡ãƒ³ãƒ†ã‚£ãƒ†ã‚£ã¸
+	D3DXMATRIXA16 id; D3DXMatrixIdentity(&id);
+	V(dev->SetTransform(D3DTS_WORLD, &id));
+	V(dev->SetTransform(D3DTS_VIEW, &id));
+	V(dev->SetTransform(D3DTS_PROJECTION, &id));
+	V(effect->SetMatrix("g_mWorldViewProjection", &id));
+
+	V(dev->BeginScene());
+
+	// ãƒ–ãƒ¬ãƒ³ãƒ‰
+	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));
+	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+	V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+	V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+	V(dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+
+	// ãƒ†ã‚¯ã‚¹ãƒãƒ£
+	V(dev->SetTexture(0, srcTex));
+	V(dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR));
+	V(dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR));
+	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP));
+	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP));
+
+	// ãƒ•ãƒ«ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã‚¯ãƒ¯ãƒƒãƒ‰
+	struct TLVertex { float x, y, z, rhw, u, v; };
+	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_TEX1;
+	TLVertex quad[4];
+	const float w = static_cast<float>(dstDesc.Width);
+	const float h = static_cast<float>(dstDesc.Height);
+	const float ox = -0.5f, oy = -0.5f;
+	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, 0.0f, 0.0f };
+	quad[1] = { w   + ox, 0.0f + oy, 0.0f, 1.0f, 1.0f, 0.0f };
+	quad[2] = { 0.0f + ox, h   + oy, 0.0f, 1.0f, 0.0f, 1.0f };
+	quad[3] = { w   + ox, h   + oy, 0.0f, 1.0f, 1.0f, 1.0f };
+	V(dev->SetFVF(TL_FVF));
+	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+
+	// å¾Œå‡¦ç†
+	V(dev->SetTexture(0, NULL));
+	V(dev->EndScene());
+
+	// å¾©å…ƒ
+	if (prevRT)
+	{
+		V(dev->SetRenderTarget(0, prevRT));
+		prevRT->Release();
+	}
+	V(dev->SetViewport(&prevVP));
+	V(dev->SetTransform(D3DTS_WORLD, &prevWorld));
+	V(dev->SetTransform(D3DTS_VIEW, &prevView));
+	V(dev->SetTransform(D3DTS_PROJECTION, &prevProj));
+	V(effect->SetMatrix("g_mWorldViewProjection", &prevFxMvp));
+	V(dev->BeginScene());
+	V(dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 }
 
-CubismRendererDx9::CubismRendererDx9()
+
+CubismRendererDx9 * CubismRendererDx9::Create(int width, int height)
+{
+	return new CubismRendererDx9(width, height);
+}
+
+CubismRendererDx9::CubismRendererDx9(int width, int height)
+	: CubismRenderer(width, height)
+	, _vertex(nullptr)
+	, _indice(nullptr)
 {
 }
 
@@ -29,15 +153,24 @@ CubismRendererDx9::~CubismRendererDx9()
 		delete _drawable[i];
 	}
 
+	for (csmUint32 i = 0; i < _offscreenBuffers.GetSize(); ++i)
+	{
+		if (_offscreenBuffers[i]) { _offscreenBuffers[i]->Destroy(); delete _offscreenBuffers[i]; }
+	}
+	_offscreenBuffers.Clear();
+	_offscreenOwnerDrawableIndex.Clear();
+	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
+	_offscreenSettings.Clear();
+
 	if (_vertex) { _vertex->Release(); _vertex = NULL; }
 	if (_indice) { _indice->Release(); _indice = NULL; }
 }
 
 /**
-* @brief   ƒŒƒ“ƒ_ƒ‰‚Ì‰Šú‰»ˆ—‚ğÀs‚·‚é<br>
-*           ˆø”‚É“n‚µ‚½ƒ‚ƒfƒ‹‚©‚çƒŒƒ“ƒ_ƒ‰‚Ì‰Šú‰»ˆ—‚É•K—v‚Èî•ñ‚ğæ‚èo‚·‚±‚Æ‚ª‚Å‚«‚é
+* @brief   
+*           
 *
-* @param[in]  model -> ƒ‚ƒfƒ‹‚ÌƒCƒ“ƒXƒ^ƒ“ƒX
+* @param[in]  model -> 
 */
 
 void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, CubismModelUserData* userdata)
@@ -53,7 +186,10 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 		indexTotalSize += model->GetDrawableVertexIndexCount(i);
 	}
 
-	//ƒoƒbƒtƒ@ì¬
+	// æ—¢å­˜ãƒãƒƒãƒ•ã‚¡è§£æ”¾ï¼ˆå†åˆæœŸåŒ–ãƒ‘ã‚¹ã‚’è€ƒæ…®ï¼‰
+	if (_vertex) { _vertex->Release(); _vertex = nullptr; }
+	if (_indice) { _indice->Release(); _indice = nullptr; }
+
 	V(g_dev->CreateVertexBuffer(sizeof(L2DAPPVertex) * vertexTotalSize,
 		0,
 		D3DFVF_XYZ | D3DFVF_TEX1,
@@ -63,7 +199,6 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 	V(g_dev->CreateIndexBuffer(sizeof(WORD) * indexTotalSize,
 		0, D3DFMT_INDEX16, D3DPOOL_MANAGED, &_indice, NULL));
 
-	//ƒƒbƒNæ“¾A¸”s‚Ìê‡‚ÍLoad¸”s
 	L2DAPPVertex* vertexBuffer;
 	if (FAILED(_vertex->Lock(0, 0, (void**)&vertexBuffer, D3DLOCK_DISCARD)))
 	{
@@ -79,7 +214,6 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 
 	_drawable.Resize(model->GetDrawableCount());
 
-	//ŠeDrawable‚Ì“Ç‚İ‚İˆ—
 	int vertexCountStack = 0;
 	int indiceCountStack = 0;
 	for (csmInt32 i = 0; i < model->GetDrawableCount(); ++i)
@@ -94,7 +228,6 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 		}
 
 		_drawable[i] = new DrawableShaderSetting();
-		
 		_drawable[i]->Initialize(model, i, vertexCountStack, indiceCountStack);
 		if (userdata != NULL)
 		{
@@ -110,10 +243,44 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 
 	_vertex->Unlock();
 	_indice->Unlock();
+
+	// ãƒ¢ãƒ‡ãƒ«ã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³æ•°ã«å¿œã˜ãŸãƒ¬ãƒ³ãƒ€ãƒ¼ã‚¿ãƒ¼ã‚²ãƒƒãƒˆã‚’ç¢ºä¿
+	for (csmUint32 i = 0; i < _offscreenBuffers.GetSize(); ++i)
+	{
+		if (_offscreenBuffers[i]) { _offscreenBuffers[i]->Destroy(); delete _offscreenBuffers[i]; }
+	}
+	_offscreenBuffers.Clear();
+	_offscreenOwnerDrawableIndex.Clear();
+	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
+	_offscreenSettings.Clear();
+
+	csmInt32 offscreenCount = model->GetOffscreenCount();
+	if (offscreenCount > 0)
+	{
+		_offscreenBuffers.Resize(offscreenCount);
+		_offscreenOwnerDrawableIndex.Resize(offscreenCount);
+		_offscreenSettings.Resize(offscreenCount);
+		for (csmInt32 i = 0; i < offscreenCount; ++i)
+		{
+			_offscreenBuffers[i] = new CubismOffscreenFrame_Dx9();
+			_offscreenBuffers[i]->Create(g_dev, _modelRenderTargetWidth, _modelRenderTargetHeight, D3DFMT_A8R8G8B8);
+
+			CubismIdHandle ownerId = model->GetOffscreenOwnerId(i);
+			csmInt32 ownerDrawableIndex = -1;
+			for (csmInt32 d = 0; d < model->GetDrawableCount(); ++d)
+			{
+				if (model->GetDrawableId(d) == ownerId) { ownerDrawableIndex = d; break; }
+			}
+			_offscreenOwnerDrawableIndex[i] = ownerDrawableIndex;
+
+			_offscreenSettings[i] = new OffscreenShaderSetting();
+			_offscreenSettings[i]->Initialize(i, ownerDrawableIndex); // ownerDrawableIndex ã‚’è»¢å†™å…ƒã¨ã—ã¦æš«å®šåˆ©ç”¨
+		}
+	}
 }
 
 /**
-* @brief   ƒ‚ƒfƒ‹‚ğ•`‰æ‚·‚é
+* @brief   
 *
 */
 
@@ -140,8 +307,6 @@ void CubismRendererDx9::DrawMasking(
 							int mode,
 							csmVector<CubismIdHandle>& ids) 
 {
-	// ƒ}ƒXƒLƒ“ƒOİ’è‚ÌRenderingSetting‚Ö‚Ì”½‰f
-
 	if (!selected) return;
 
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
@@ -160,25 +325,21 @@ void CubismRendererDx9::DrawMasking(
 			isFit = !isFit;
 		}
 
-		DrawingMaskingMode set = DrawingMaskingMode::DrawMask;
+		DrawingMaskingMode setMode = DrawingMaskingMode::DrawMask;
 
 		if (!isFit) {
 			if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
-				set = DrawingMaskingMode::Skip;
+				setMode = DrawingMaskingMode::Skip;
 			}
 			else {
-				set = DrawingMaskingMode::EraseMask;
+				setMode = DrawingMaskingMode::EraseMask;
 			}
 		}
-		_drawable[i]->SetDrawingMaskingType(set);
+		_drawable[i]->SetDrawingMaskingType(setMode);
 	}
 
-	// DXƒvƒƒtƒ@ƒCƒ‹•Û‘¶
 	SaveProfile();
 	
-
-	// •`‰æŒnˆ—@«
-	// ƒ}ƒgƒŠƒNƒX’²®
 	D3DXMATRIXA16 view;
 	V(g_dev->GetTransform(D3DTS_VIEW, &view));
 
@@ -202,36 +363,29 @@ void CubismRendererDx9::DrawMasking(
 	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
 
 	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
-
-	//vertecx update
 	UpdateVertexs();
 	
-	// ƒeƒNƒXƒ`ƒƒŠÖ˜A•t‚¯
 	for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
 	{
 		_nowTexture[i] = _textures[i]->getNowTex();
 	}
 
-	// ’¸“_“]‘—
 	V(g_dev->SetIndices(_indice));
 	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
 
 	V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	// •`‰æ‡˜ƒ\[ƒg
 	csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
 
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
 	{
-		sort[GetModel()->GetDrawableRenderOrders()[i]] = _drawable[i];
+		sort[GetModel()->GetRenderOrders()[i]] = _drawable[i];
 	}
 
-	// Turn off D3D lighting
 	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
 
-	// Drawable•`‰æ
-	int xxx = 0;
 	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
 	{
 		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
@@ -254,10 +408,23 @@ void CubismRendererDx9::DrawMasking(
 			V(g_effect->SetTechnique("RenderMaskingNoMask"));
 		}
 
-
 		V(g_effect->SetFloat("drawableOpacity", opa));
+
+		CubismTextureColor modelColor = GetModelColor();
+		D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
 		D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
+		diffuse.r *= modelDiffuse.r;
+		diffuse.g *= modelDiffuse.g;
+		diffuse.b *= modelDiffuse.b;
+		diffuse.a *= modelDiffuse.a;
 		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+
+		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
+		V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
+		csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
+		V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
 
 		int texnum = sort[i]->GetTextureIndex();
 		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
@@ -271,20 +438,18 @@ void CubismRendererDx9::DrawMasking(
 		V(g_effect->End());
 	}
 
-	// DXƒvƒƒtƒ@ƒCƒ‹•œŒ³
 	RestoreProfile();
 }
 
 bool CubismRendererDx9::AddTexture(const char * filepath)
 {
 	LPDIRECT3DTEXTURE9 newtex;
-	// ƒeƒNƒXƒ`ƒƒ‰æ‘œ‚ğDirextX‚Å‚Ì•\¦—p‚É•ÏŠ·
 	if (FAILED(D3DXCreateTextureFromFileExA(g_dev
 		, filepath
-		, 0	//width 
-		, 0	//height
-		, 0	//mipmap //( 0‚È‚çŠ®‘S‚Èƒ~ƒbƒvƒ}ƒbƒvƒ`ƒF[ƒ“j
-		, 0	//Usage
+		, 0
+		, 0
+		, 0
+		, 0
 		, D3DFMT_A8R8G8B8
 		, D3DPOOL_MANAGED
 		, D3DX_FILTER_LINEAR
@@ -311,19 +476,13 @@ void CubismRendererDx9::UpdateTex(int texNo, void * dataIndex, int nWidth, int n
 	LAppTextureDesc* target = (LAppTextureDesc*)_textures[texNo];
 	if (target == NULL)
 		return;
-	//resize
 	if (!target->isSameSize(nWidth, nHeight))
 	{
 		LPDIRECT3DTEXTURE9 ntex;
-		//if (FAILED(g_pD3DDevice->CreateTexture(nWidth, nHeight, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &ntex,NULL)))
 		if (FAILED(g_dev->CreateTexture(nWidth, nHeight, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &ntex, NULL)))
 		{
 			return;
 		}
-
-		//setTex on precheck
-		//((Live2DModelD3D*)live2DModel)->setTexture(texNo, ntex);
-
 		target->changeData(ntex);
 		target->UpdateTexture((DWORD*)dataIndex, nWidth, nHeight);
 	}
@@ -370,113 +529,205 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	}
 }
 
-/**
-* @brief   ƒ‚ƒfƒ‹•`‰æ‚ÌÀ‘•
-*
-*/
-
  void CubismRendererDx9::DoDrawModel()
 {
-	D3DXMATRIXA16 view;
-	V(g_dev->GetTransform(D3DTS_VIEW, &view));
+    D3DXMATRIXA16 view;
+    V(g_dev->GetTransform(D3DTS_VIEW, &view));
 
-	D3DXMATRIXA16 projection;
-	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
+    D3DXMATRIXA16 projection;
+    V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
 
-	D3DXMATRIXA16 mmvp;
-	D3DXMatrixIdentity(&mmvp);
+    D3DXMATRIXA16 mmvp;
+    D3DXMatrixIdentity(&mmvp);
 
-	D3DXMATRIXA16 modelMat(_mtrx->getArray());
-	
-	D3DXMATRIXA16 normalizeMat;
-	D3DXMatrixIdentity(&normalizeMat);
-	normalizeMat._11 *= -1;
-	normalizeMat._41 += 0.5;
-	normalizeMat._42 -= 0.5;
+    D3DXMATRIXA16 modelMat(_mtrx->getArray());
+    
+    D3DXMATRIXA16 normalizeMat;
+    D3DXMatrixIdentity(&normalizeMat);
+    normalizeMat._11 *= -1;
+    normalizeMat._41 += 0.5f;
+    normalizeMat._42 -= 0.5f;
 
-	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &view);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &view);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
 
-	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+    V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+    V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
+    // é ‚ç‚¹æ›´æ–°
+    UpdateVertexs();
 
-	//vertecx update
-	UpdateVertexs();
+    // ãƒ†ã‚¯ã‚¹ãƒãƒ£æ›´æ–°
+    for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
+    {
+        _nowTexture[i] = _textures[i]->getNowTex();
+    }
 
-	//draw(maskmake)
+    V(g_dev->SetIndices(_indice));
+    V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+    V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
+    csmInt32 drawableCount  = GetModel()->GetDrawableCount();
+    csmInt32 offscreenCount = GetModel()->GetOffscreenCount();
+
+    // æç”»æƒ…å ±ã‚’ Drawable ã¨ Offscreen ã§åˆ†é›¢ã—ã¦ä¿æŒ
+    struct RenderEntry
+    {
+        csmInt32 Order;      // ã‚½ãƒ¼ãƒˆå¾Œã®æç”»é †åº
+        csmInt32 Index;      // DrawableIndex or OffscreenIndex
+        bool     IsOffscreen;
+    };
+
+    csmVector<RenderEntry> entries;
+    entries.Resize(drawableCount + offscreenCount);
+
+    // ä¸€æ—¦ push ã™ã‚‹ãŸã‚ã®ã‚«ã‚¦ãƒ³ã‚¿
+    csmInt32 pushPos = 0;
+
+    // Drawable åˆ†
+    for (csmInt32 i = 0; i < drawableCount; ++i)
+    {
+        RenderEntry e;
+        e.Order = GetModel()->GetRenderOrders()[i];
+        e.Index = i;
+        e.IsOffscreen = false;
+        entries[pushPos++] = e;
+    }
+    // Offscreen åˆ†ï¼ˆæç”»é †é…åˆ—ã®å¾ŒåŠã«ã‚ã‚‹ã¨æƒ³å®šï¼‰
+    for (csmInt32 i = 0; i < offscreenCount; ++i)
+    {
+        RenderEntry e;
+        e.Order = GetModel()->GetRenderOrders()[drawableCount + i];
+        e.Index = i; // OffscreenIndex
+        e.IsOffscreen = true;
+        entries[pushPos++] = e;
+    }
+
+    // å®Ÿéš›ã®æç”»é †ã§ã‚½ãƒ¼ãƒˆ (æ˜‡é †: å°ã•ã„OrderãŒå…ˆ)
+    for (csmInt32 i = 1; i < entries.GetSize(); ++i)
+    {
+        RenderEntry key = entries[i];
+        csmInt32 j = i - 1;
+        while (j >= 0 && entries[j].Order > key.Order)
+        {
+            entries[j + 1] = entries[j];
+            --j;
+        }
+        entries[j + 1] = key;
+    }
+
+    // ãƒ©ã‚¤ãƒ†ã‚£ãƒ³ã‚° OFF
+    V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+
+    // ã‚½ãƒ¼ãƒˆæ¸ˆã¿ã‚¨ãƒ³ãƒˆãƒªã‚’é †ã«æç”»
+    for (csmInt32 i = 0; i < entries.GetSize(); ++i)
+    {
+        const RenderEntry& e = entries[i];
+        if (e.IsOffscreen)
+        {
+            DrawOffscreen(_offscreenSettings[e.Index]);
+            CubismLogWarning("%d offset index:%d target:%d", i, e.Index, _offscreenSettings[e.Index]->GetTransferOffscreenIndex());
+        }
+        else
+        {
+            DrawDrawable(_drawable[e.Index]);
+            CubismLogWarning("%d drawable index:%d target:%d", i, e.Index, _drawable[e.Index]->GetOffscreenIndex());
+        }
+    }
+
+    // ãƒ•ãƒ¬ãƒ¼ãƒ æœ«å°¾ã§ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ãŒé–‹ã„ã¦ã„ã‚Œã°é–‰ã˜ã¦è»¢å†™
+    if (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex < (csmInt32)_offscreenBuffers.GetSize())
+    {
+        CubismOffscreenFrame_Dx9* off = _offscreenBuffers[s_ActiveOffscreenIndex];
+        if (off && off->IsValid())
+        {
+            off->EndDraw(g_dev);
+            TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
+        }
+        s_ActiveOffscreenIndex = -1;
+    }
+}
+
+void CubismRendererDx9::DrawOffscreen(OffscreenShaderSetting* offscreenSetting)
+{
+	// Offscreen ã‚¨ãƒ³ãƒˆãƒªï¼é–‹å§‹åˆå›³ã¨ã—ã¦æ‰±ã†ï¼ˆè»¢å†™ã¯ã‚¯ãƒ­ãƒ¼ã‚ºæ™‚ã«å®Ÿæ–½ï¼‰
+	if (!offscreenSetting) return;
+	csmInt32 idx = offscreenSetting->GetTransferOffscreenIndex();
+	if (idx < 0 || idx >= (csmInt32)_offscreenBuffers.GetSize()) return;
+	CubismOffscreenFrame_Dx9* target = _offscreenBuffers[idx];
+	if (!target || !target->IsValid()) return;
+
+	// æ—¢ã«ä»–ã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ãŒ Begin æ¸ˆã¿ãªã‚‰é–‰ã˜ã¦è»¢å†™
+	if (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex != idx)
 	{
-		_nowTexture[i] = _textures[i]->getNowTex();
+		CubismOffscreenFrame_Dx9* prev = _offscreenBuffers[s_ActiveOffscreenIndex];
+		if (prev && prev->IsValid()) { prev->EndDraw(g_dev); }
+		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
+		s_ActiveOffscreenIndex = -1;
 	}
 
-	V(g_dev->SetIndices(_indice));
-	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
-
-	V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
-
-	csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
-
-	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+	// ã¾ã  Begin ã—ã¦ã„ãªã‘ã‚Œã°é–‹å§‹ï¼ˆã‚¯ãƒªã‚¢: é€æ˜ï¼‰
+	if (s_ActiveOffscreenIndex < 0)
 	{
-		sort[GetModel()->GetDrawableRenderOrders()[i]] = _drawable[i];
-	}
-
-	// Turn off D3D lighting
-	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
-
-	int xxx = 0;
-	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
-	{
-		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
-		{
-			sort[i]->GetDiffuse();
-			continue;
-		}
-		//const char* ID = GetModel()->GetDrawableId(sort[i]->GetDrawableIndex())->GetString().GetRawString();
-		float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
-		if (sort[i]->GetMaskCount() > 0)
-		{
-			MakeMask(sort[i]->GetDrawableIndex());
-
-			V(g_effect->SetTexture("Mask", g_maskTexture));
-
-			V(g_effect->SetTechnique("RenderSceneMasked"));
-			V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
-		}
-		else
-		{
-			V(g_effect->SetTechnique("RenderSceneNomask"));
-		}
-
-
-		V(g_effect->SetFloat("drawableOpacity", opa));
-		D3DXCOLOR diffuse = sort[i]->GetDiffuse();
-		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
-
-		int texnum = sort[i]->GetTextureIndex();
-		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
-		V(g_effect->SetTexture("TexMain", tex));
-
-		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
-		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
-		V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
-		csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
-		D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
-		V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
-		
-		UINT32	xxxx;
-		V(g_effect->Begin(&xxxx, 0));
-		V(g_effect->BeginPass(0));
-		sort[i]->DrawMesh(g_dev);
-		V(g_effect->EndPass());
-		V(g_effect->End());
+		target->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0, 0, 0, 0));
+		s_ActiveOffscreenIndex = idx;
 	}
 }
 
- void CubismRendererDx9::UpdateVertexs()
+void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
+{
+	if (!drawableSetting) return;
+	if (!GetModel()->GetDrawableDynamicFlagIsVisible(drawableSetting->GetDrawableIndex())) { drawableSetting->GetDiffuse(); return; }
+
+	// ã‚¢ã‚¯ãƒ†ã‚£ãƒ–ãªã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã¨å¯¾è±¡Drawableã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³IndexãŒç•°ãªã‚‹å ´åˆã¯ã‚¯ãƒ­ãƒ¼ã‚ºï¼‹è»¢å†™
+	if (s_ActiveOffscreenIndex >= 0 && drawableSetting->GetOffscreenIndex() != s_ActiveOffscreenIndex)
+	{
+		CubismOffscreenFrame_Dx9* prev = _offscreenBuffers[s_ActiveOffscreenIndex];
+		if (prev && prev->IsValid()) { prev->EndDraw(g_dev); }
+		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
+		s_ActiveOffscreenIndex = -1;
+	}
+
+	float opa = GetModel()->GetDrawableOpacity(drawableSetting->GetDrawableIndex());
+
+	if (drawableSetting->GetMaskCount() > 0)
+	{
+		MakeMask(drawableSetting->GetDrawableIndex());
+		V(g_effect->SetTexture("Mask", g_maskTexture));
+		V(g_effect->SetTechnique("RenderSceneMasked"));
+		V(g_effect->SetBool("isInvertMask", drawableSetting->GetIsInvertMask()));
+	}
+	else
+	{
+		V(g_effect->SetTechnique("RenderSceneNomask"));
+	}
+
+	V(g_effect->SetFloat("drawableOpacity", opa));
+	CubismTextureColor modelColor = GetModelColor();
+	D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
+	D3DXCOLOR diffuse = drawableSetting->GetDiffuse();
+	diffuse.r *= modelDiffuse.r; diffuse.g *= modelDiffuse.g; diffuse.b *= modelDiffuse.b; diffuse.a *= modelDiffuse.a;
+	V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+
+	int texnum = drawableSetting->GetTextureIndex();
+	LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
+	V(g_effect->SetTexture("TexMain", tex));
+
+	csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(drawableSetting->GetDrawableIndex());
+	D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
+	V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
+	csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(drawableSetting->GetDrawableIndex());
+	D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
+	V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
+
+	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
+	drawableSetting->DrawMesh(g_dev);
+	V(g_effect->EndPass()); V(g_effect->End());
+}
+ 
+void CubismRendererDx9::UpdateVertexs()
  {
 	 L2DAPPVertex* vertexBuffer;
 	 if (FAILED(_vertex->Lock(0, 0, (void**)&vertexBuffer, D3DLOCK_DISCARD)))
@@ -499,8 +750,6 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 
  void CubismRendererDx9::MakeMask(int tindex)
  {
-	 //V(g_effect->EndPass());
-	 //V(g_effect->End());
 	 V(g_dev->EndScene());
 
 	 LPDIRECT3DSURFACE9	preRenderSurface;
@@ -527,6 +776,8 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 		 }
 		 LPDIRECT3DTEXTURE9 tex = _nowTexture[_drawable[targetIndex]->GetTextureIndex()];
 		 V(g_effect->SetTexture("TexMain", tex));
+
+		 V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
 		 V(g_effect->Begin(&xxxx, 0));
 		 V(g_effect->BeginPass(0));
@@ -574,6 +825,28 @@ void DrawableShaderSetting::Initialize(CubismModel* model, int drawindex, int & 
 	{
 		masks[i] = model->GetDrawableMasks()[drawableIndex][i];
 	}
+
+	// è¦ªãƒ‘ãƒ¼ãƒ„ã‚’è¾¿ã£ã¦ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³Indexã‚’æ¢ç´¢
+	offscreenIndex = -1;
+	csmInt32 currentPart = model->GetDrawableParentPartIndex(drawableIndex);
+	const csmInt32* partParentTable = model->GetPartParentPartIndices();
+	const csmInt32* partOffscreenTable = model->GetPartOffscreenIndices();
+	while (currentPart != CubismModel::CubismNoIndex_Parent && currentPart >= 0)
+	{
+		if (partOffscreenTable && partOffscreenTable[currentPart] != CubismModel::CubismNoIndex_Offscreen)
+		{
+			offscreenIndex = partOffscreenTable[currentPart];
+			break;
+		}
+		if (partParentTable)
+		{
+			currentPart = partParentTable[currentPart];
+		}
+		else
+		{
+			break;
+		}
+	}
 }
 
 void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
@@ -584,7 +857,7 @@ void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 	}
 	else
 	{
-		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));
 	}
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
@@ -605,9 +878,9 @@ void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 		break;
 	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
 	default:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
 		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
 		break;
 	}
@@ -623,14 +896,14 @@ void DrawableShaderSetting::DrawMask(LPDIRECT3DDEVICE9 dev)
 	}
 	else
 	{
-		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));
 	}
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
 	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));//D3DCULL_CCW
+	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));
 	V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));//D3DCULL_CCW
+	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
 	V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
 
 	V(dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3));
@@ -644,7 +917,7 @@ void DrawableShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
 	}
 	else
 	{
-		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));
 	}
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
@@ -661,9 +934,9 @@ void DrawableShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
 		break;
 	case DrawingMaskingMode::DrawMask:
 	default:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));//D3DCULL_CCW
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
 		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
 		break;
 	}
@@ -754,7 +1027,83 @@ void DrawableShaderSetting::AddElements(const csmString & userDataValue)
 	userdataElements.PushBack(CubismFramework::GetIdManager()->GetId(buffer));
 }
 
-CubismRenderer* CubismRenderer::Create()
+// OffscreenShaderSetting å®Ÿè£…
+void OffscreenShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 {
-	return CubismRendererDx9::Create();
+	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
+	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
+
+	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	switch (drawtype)
+	{
+	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+		break;
+	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+		break;
+	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
+	default:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+		break;
+	}
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
 }
+
+void OffscreenShaderSetting::DrawMask(LPDIRECT3DDEVICE9 dev)
+{
+	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
+	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
+	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));
+	V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+	V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+	V(dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3));
+}
+
+void OffscreenShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
+{
+	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
+	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
+	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	switch (maskingType)
+	{
+	case DrawingMaskingMode::Skip: return;
+	case DrawingMaskingMode::EraseMask:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+		break;
+	case DrawingMaskingMode::DrawMask:
+	default:
+		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+		break;
+	}
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
+}
+
+int OffscreenShaderSetting::GetMaskCount() { return masks.GetSize(); }
+int OffscreenShaderSetting::GetTextureIndex() { return textureIndex; }
+int OffscreenShaderSetting::GetDrawableIndex() { return drawableIndex; }
+int OffscreenShaderSetting::GetMask(int i) { return masks[i]; }
+D3DXCOLOR OffscreenShaderSetting::GetDiffuse() { D3DXCOLOR ret = diffuse; diffuse = D3DXCOLOR(1,1,1,1); return ret; }
+D3DXCOLOR OffscreenShaderSetting::GetMultipleColor() { return D3DXCOLOR(1,1,1,1); }
+D3DXCOLOR OffscreenShaderSetting::GetScreenColor() { return D3DXCOLOR(0,0,0,0); }
+void OffscreenShaderSetting::MixDiffuseColor(float opa, float r, float g, float b, float a) { diffuse = D3DXCOLOR(r,g,b,a)*opa + diffuse*(1-opa); }

@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "ipc_common.h"
 #include "../src\LAppTextureDesc.h"
 #include "../framework\L2DModelMatrix.h"
@@ -7,6 +7,7 @@
 #include "../OWFramework\src\Rendering\CubismRenderer.hpp"
 #include "../OWFramework\src\Id\CubismIdManager.hpp"
 #include "../OWFramework\src\Model\CubismModelUserData.hpp"
+#include "CubismRenderTargetDx9.h" // è¿½åŠ : Offscreen ç”¨
 
 
 using namespace Live2DC3::Cubism::Framework;
@@ -14,23 +15,7 @@ using namespace Live2DC3::Cubism::Core;
 using namespace Live2DC3::Cubism::Framework::Rendering;
 using live2d::framework::L2DModelMatrix;
 
-/*
-
-	ƒoƒbƒtƒ@ì‚é
-	Drawable“o˜^
-
-
-ƒeƒNƒXƒ`ƒƒ“o˜^
-ƒeƒNƒXƒ`ƒƒXV
-
-ƒ}ƒXƒNŒnó—ÌŠÖ”
-ƒVƒF[ƒ_[AƒfƒoƒCƒXó—Ì
-
-ƒfƒoƒCƒXƒƒXƒg
-*/
-
-#define V(hr) if(((HRESULT)(hr)) < 0){live2d::UtDebug::error("%s(%d) DirectX Error[ %s ]\n",__FILE__,__LINE__,#hr);}
-//#define V(hr) hr
+#define V(hr) if(((HRESULT)(hr)) < 0){live2d::UtDebug::error("%s(%d) DirectX Error[ %s ]\n",__FILE__,__LINE__,#hr);} 
 
 struct L2DAPPVertex
 {
@@ -38,22 +23,8 @@ struct L2DAPPVertex
 	float u, v;
 };
 
-typedef struct RenderOrderSorter
-{
-	int DrawableIndex;
-	int RenderOrderIndex;
-}RenderOrderSorter;
-
-static int CompareSortableDrawables(const void *a, const void *b)
-{
-	const RenderOrderSorter* drawableA = (const RenderOrderSorter*)a;
-	const RenderOrderSorter* drawableB = (const RenderOrderSorter*)b;
-
-
-	return (drawableA->RenderOrderIndex > drawableB->RenderOrderIndex) - (drawableA->RenderOrderIndex < drawableB->RenderOrderIndex);
-}
-
-enum DrawingMaskingMode
+// ãƒã‚¹ã‚­ãƒ³ã‚°æç”»ãƒ¢ãƒ¼ãƒ‰ï¼ˆscoped enum ã§ cpp å´ã® DrawingMaskingMode::X è¨˜æ³•ã«å¯¾å¿œï¼‰
+enum class DrawingMaskingMode
 {
 	DrawMask,
 	EraseMask,
@@ -97,57 +68,93 @@ public:
 
 	void AddElements(const csmString& userDataValue);
 
-	void SetDrawingMaskingType(DrawingMaskingMode set) {
-		maskingType = set;
-	}
+	void SetDrawingMaskingType(DrawingMaskingMode set) { maskingType = set; }
 
-	bool GetIsInvertMask() const
-	{
-		return isInvertMask;
-	}
+	bool GetIsInvertMask() const { return isInvertMask; }
+
+	int GetOffscreenIndex() const { return offscreenIndex; }
 
 private:
-	
-	int vertexCount;
-	int vertexStart;
-	int indiceCount;
-	int indiceStart;
+	int vertexCount; int vertexStart; int indiceCount; int indiceStart; int drawableIndex; int textureIndex; csmVector<int> masks; bool isInvertMask; Rendering::CubismRenderer::CubismBlendMode drawtype; DrawingMaskingMode maskingType; bool nonCulling; D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements; int offscreenIndex; // è¦ªãƒ‘ãƒ¼ãƒ„ã‹ã‚‰è¾¿ã£ãŸã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³Index (-1ã§ç„¡ã—)
+};
 
-	int drawableIndex;
-	int textureIndex;
+// è¿½åŠ : Offscreen ç”¨è¨­å®šã‚¯ãƒ©ã‚¹ï¼ˆæ‹¡å¼µï¼‰
+class OffscreenShaderSetting
+{
+public:
+	OffscreenShaderSetting()
+		: _offscreenIndex(-1)
+		, _transferOffscreenIndex(-1)
+		, vertexCount(0)
+		, vertexStart(0)
+		, indiceCount(0)
+		, indiceStart(0)
+		, drawableIndex(-1)
+		, textureIndex(-1)
+		, isInvertMask(false)
+		, drawtype(Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal)
+		, maskingType(DrawingMaskingMode::DrawMask)
+		, nonCulling(true)
+		, diffuse(1,1,1,1)
+	{}
 
-	csmVector<int> masks;
-	bool isInvertMask;
+	~OffscreenShaderSetting() { masks.Clear(); userdataElements.Clear(); }
 
-	Rendering::CubismRenderer::CubismBlendMode drawtype;
-	DrawingMaskingMode maskingType;
-	bool nonCulling;
+	// offscreenIndex: ã“ã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³è‡ªèº«ã®Index
+	// transferOffscreenIndex: æç”»æ™‚ã«è»¢å†™(ãƒ–ãƒªãƒƒãƒˆ)å…ƒã¨ãªã‚‹åˆ¥ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³Index (-1ã§æœªè¨­å®š/è‡ªå‰ãƒ†ã‚¯ã‚¹ãƒãƒ£)
+	void Initialize(csmInt32 offscreenIndex, csmInt32 transferOffscreenIndex)
+	{
+		_offscreenIndex = offscreenIndex;
+		_transferOffscreenIndex = transferOffscreenIndex;
+	}
 
-	D3DXCOLOR diffuse;
+	csmInt32 GetOffscreenIndex() const { return _offscreenIndex; }
+	csmInt32 GetTransferOffscreenIndex() const { return _transferOffscreenIndex; }
 
-	csmVector<CubismIdHandle> userdataElements;
+	// DrawableShaderSetting äº’æ› API
+	void DrawMesh(LPDIRECT3DDEVICE9 dev);
+	void DrawMask(LPDIRECT3DDEVICE9 dev);
+	void DrawMaskingMesh(LPDIRECT3DDEVICE9 dev);
+	int GetMaskCount();
+	int GetTextureIndex();
+	int GetDrawableIndex();
+	int GetMask(int i);
+	D3DXCOLOR GetDiffuse();
+	D3DXCOLOR GetMultipleColor();
+	D3DXCOLOR GetScreenColor();
+	void MixDiffuseColor(float opa, float r, float g, float b, float a);
+	bool GetIsInvertMask() const { return isInvertMask; }
+	void SetDrawingMaskingType(DrawingMaskingMode set) { maskingType = set; }
+
+	// å…¬é–‹ç”¨ç°¡æ˜“åˆæœŸè¨­å®šï¼ˆå¤–éƒ¨ã§ç›´æ¥è¨­å®šã•ã‚Œã‚‹æƒ³å®šï¼‰
+	void SetGeometry(int vStart, int vCount, int iStart, int iCount)
+	{ vertexStart = vStart; vertexCount = vCount; indiceStart = iStart; indiceCount = iCount; }
+	void SetIndicesTextureDrawable(int drawIdx, int texIdx) { drawableIndex = drawIdx; textureIndex = texIdx; }
+	void SetMaskInfo(const csmVector<int>& src, bool invert) { masks = src; isInvertMask = invert; }
+	void SetBlendAndCulling(Rendering::CubismRenderer::CubismBlendMode bt, bool noCull) { drawtype = bt; nonCulling = noCull; }
+
+private:
+	csmInt32 _offscreenIndex;              // ã“ã®ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã®ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
+	csmInt32 _transferOffscreenIndex;      // è»¢å†™å…ƒã¨ãªã‚‹ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ (-1ã§è‡ªèº«/æœªä½¿ç”¨)
+
+	// Drawable ç›¸å½“ã®ä¿æŒæƒ…å ±
+	int vertexCount; int vertexStart; int indiceCount; int indiceStart; 
+	int drawableIndex; int textureIndex; 
+	csmVector<int> masks; bool isInvertMask; 
+	Rendering::CubismRenderer::CubismBlendMode drawtype; DrawingMaskingMode maskingType; bool nonCulling; 
+	D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements; 
 };
 
 class CubismRendererDx9 : public CubismRenderer
 {
 public:
-	static CubismRendererDx9* Create();
+	static CubismRendererDx9* Create(int width, int height);
 
-	CubismRendererDx9();
+	CubismRendererDx9(int width, int height);
 	~CubismRendererDx9();
-	/**
-	* @brief   ƒŒƒ“ƒ_ƒ‰‚Ì‰Šú‰»ˆ—‚ğÀs‚·‚é<br>
-	*           ˆø”‚É“n‚µ‚½ƒ‚ƒfƒ‹‚©‚çƒŒƒ“ƒ_ƒ‰‚Ì‰Šú‰»ˆ—‚É•K—v‚Èî•ñ‚ğæ‚èo‚·‚±‚Æ‚ª‚Å‚«‚é
-	*
-	* @param[in]  model -> ƒ‚ƒfƒ‹‚ÌƒCƒ“ƒXƒ^ƒ“ƒX
-	*/
+
 	void Initialize(Csm::CubismModel* model, L2DModelMatrix* mat, CubismModelUserData* userdata);
 
-
-	/**
-	* @brief   ƒ‚ƒfƒ‹‚ğ•`‰æ‚·‚é
-	*
-	*/
 	void DrawModel();
 	
 	void DrawMasking(bool selected, int mode, csmVector<CubismIdHandle>& ids);
@@ -167,30 +174,16 @@ public:
 	void AddColorOnElement(CubismIdHandle ID, float opa, float r, float g, float b, float a);
 
 protected:
-	/**
-	* @brief   ƒ‚ƒfƒ‹•`‰æ‚ÌÀ‘•
-	*
-	*/
 	void DoDrawModel();
 
 	void UpdateVertexs();
 
 	void MakeMask(int tindex);
 
-	/**
-	* @brief   •`‰æƒIƒuƒWƒFƒNƒgiƒA[ƒgƒƒbƒVƒ…j‚ğ•`‰æ‚·‚éB<br>
-	*           ƒ|ƒŠƒSƒ“ƒƒbƒVƒ…‚ÆƒeƒNƒXƒ`ƒƒ”Ô†‚ğƒZƒbƒg‚Å“n‚·B
-	*
-	* @param[in]   textureNo            ->  •`‰æ‚·‚éƒeƒNƒXƒ`ƒƒ”Ô†
-	* @param[in]   indexCount           ->  •`‰æƒIƒuƒWƒFƒNƒg‚ÌƒCƒ“ƒfƒbƒNƒX’l
-	* @param[in]   vertexCount          ->  ƒ|ƒŠƒSƒ“ƒƒbƒVƒ…‚Ì’¸“_”
-	* @param[in]   indexArray           ->  ƒ|ƒŠƒSƒ“ƒƒbƒVƒ…’¸“_‚ÌƒCƒ“ƒfƒbƒNƒX”z—ñ
-	* @param[in]   vertexArray          ->  ƒ|ƒŠƒSƒ“ƒƒbƒVƒ…‚Ì’¸“_”z—ñ
-	* @param[in]   uvArray              ->  uv”z—ñ
-	* @param[in]   opacity              ->  •s“§–¾“x
-	* @param[in]   colorBlendMode       ->  ƒJƒ‰[ƒuƒŒƒ“ƒfƒBƒ“ƒO‚Ìƒ^ƒCƒv
-	*
-	*/
+	// åˆ†é›¢: Drawable ã¨ Offscreen æç”»
+	void DrawDrawable(DrawableShaderSetting* drawableSetting);
+	void DrawOffscreen(OffscreenShaderSetting* offscreenSetting);
+
 	virtual void DrawMesh(csmInt32 textureNo, csmInt32 indexCount, csmInt32 vertexCount
 		, csmUint16* indexArray, csmFloat32* vertexArray, csmFloat32* uvArray
 		, csmFloat32 opacity, CubismBlendMode colorBlendMode, csmBool invertedMask)
@@ -198,25 +191,20 @@ protected:
 
 	}
 
-	/**
-	* @brief   ƒ‚ƒfƒ‹•`‰æ’¼‘O‚ÌƒŒƒ“ƒ_ƒ‰‚ÌƒXƒe[ƒg‚ğ•Û‚·‚é
-	*/
-	void SaveProfile()
-	{
-	}
+	void SaveProfile(){}
+	void RestoreProfile(){}
 
-
-	/**
-	* @brief   ƒ‚ƒfƒ‹•`‰æ’¼‘O‚ÌƒŒƒ“ƒ_ƒ‰‚ÌƒXƒe[ƒg‚ğ•œ‹A‚³‚¹‚é
-	*/
-	void RestoreProfile()
-	{
-	}
+	void BeforeDrawModelRenderTarget() {}
+	void AfterDrawModelRenderTarget() {}
 
 	Csm::csmVector<LAppTextureDesc*> _textures;
 	Csm::csmVector<DrawableShaderSetting*> _drawable;
-
 	csmVector<LPDIRECT3DTEXTURE9> _nowTexture;
+
+	// è¿½åŠ : ãƒ¢ãƒ‡ãƒ«ã® Offscreen æ•°ã«å¯¾å¿œã™ã‚‹ã‚ªãƒ•ã‚¹ã‚¯ãƒªãƒ¼ãƒ³ãƒ•ãƒ¬ãƒ¼ãƒ 
+	csmVector<CubismOffscreenFrame_Dx9*> _offscreenBuffers;
+	csmVector<csmInt32> _offscreenOwnerDrawableIndex; // å„Offscreenã®ã‚ªãƒ¼ãƒŠãƒ¼Drawableã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
+	csmVector<OffscreenShaderSetting*> _offscreenSettings; // Offscreenè¨­å®š
 
 	LPDIRECT3DVERTEXBUFFER9 _vertex;
 	LPDIRECT3DINDEXBUFFER9  _indice;
