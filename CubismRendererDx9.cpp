@@ -19,11 +19,12 @@ LPD3DXEFFECT		CubismRendererDx9::g_effect = NULL;
 static csmInt32 s_ActiveOffscreenIndex = -1;
 
 // オフスクリーンの内容を転写（SRCALPHA考慮）
-static void TransferOffscreenBuffer(
+void CubismRendererDx9::TransferOffscreenBuffer(
 	LPDIRECT3DDEVICE9 dev,
 	LPD3DXEFFECT effect,
 	csmVector<CubismOffscreenFrame_Dx9*>& buffers,
 	csmVector<OffscreenShaderSetting*>& settings,
+	CubismModel* model,
 	csmInt32 srcIndex)
 {
 	if (!dev || !effect) return;
@@ -38,6 +39,12 @@ static void TransferOffscreenBuffer(
 	{
 		dstIndex = settings[srcIndex]->GetTransferOffscreenIndex();
 	}
+
+	CubismLogWarning("offsetBake index:%d target:%d", srcIndex, dstIndex);
+
+	// パーツ（オーナーDrawable）の不透明度を取得
+	float ownerOpacity = model->GetOffscreenOpacity(srcIndex);
+	
 
 	// シーンを一旦終了し、RT切替
 	V(dev->EndScene());
@@ -60,7 +67,10 @@ static void TransferOffscreenBuffer(
 		if (dstOff && dstOff->IsValid())
 		{
 			dstSurf = dstOff->GetSurface();
-			if (dstSurf) { V(dev->SetRenderTarget(0, dstSurf)); }
+			if (dstSurf) {
+				CubismLogWarning("offsetBake index:%d target:%d", srcIndex, dstIndex);
+				V(dev->SetRenderTarget(0, dstSurf)); 
+			}
 		}
 	}
 
@@ -94,19 +104,32 @@ static void TransferOffscreenBuffer(
 	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP));
 	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP));
 
-	// フルスクリーンクワッド
-	struct TLVertex { float x, y, z, rhw, u, v; };
-	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_TEX1;
+	// テクスチャステージで頂点カラーと乗算（アルファも）
+	V(dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE));
+	V(dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE));
+	V(dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE));
+	V(dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE));
+	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE));
+	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE));
+
+	// フルスクリーンクワッド（頂点カラーに不透明度適用）
+	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
+	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 	TLVertex quad[4];
 	const float w = static_cast<float>(dstDesc.Width);
 	const float h = static_cast<float>(dstDesc.Height);
 	const float ox = -0.5f, oy = -0.5f;
-	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, 0.0f, 0.0f };
-	quad[1] = { w   + ox, 0.0f + oy, 0.0f, 1.0f, 1.0f, 0.0f };
-	quad[2] = { 0.0f + ox, h   + oy, 0.0f, 1.0f, 0.0f, 1.0f };
-	quad[3] = { w   + ox, h   + oy, 0.0f, 1.0f, 1.0f, 1.0f };
+	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, ownerOpacity);
+	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
+	quad[1] = { w   + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
+	quad[2] = { 0.0f + ox, h   + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
+	quad[3] = { w   + ox, h   + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(dev->SetFVF(TL_FVF));
 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+
+
+	LPDIRECT3DSURFACE9 target = NULL; V(dev->GetRenderTarget(0, &target));
+	CubismLogWarning("DrawOffscreen target:%p", target);
 
 	// 後処理
 	V(dev->SetTexture(0, NULL));
@@ -118,13 +141,22 @@ static void TransferOffscreenBuffer(
 		V(dev->SetRenderTarget(0, prevRT));
 		prevRT->Release();
 	}
+
+
 	V(dev->SetViewport(&prevVP));
 	V(dev->SetTransform(D3DTS_WORLD, &prevWorld));
 	V(dev->SetTransform(D3DTS_VIEW, &prevView));
 	V(dev->SetTransform(D3DTS_PROJECTION, &prevProj));
 	V(effect->SetMatrix("g_mWorldViewProjection", &prevFxMvp));
 	V(dev->BeginScene());
+
+	V(g_dev->SetIndices(_indice));
+	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+
 	V(dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
+
+	CubismLogWarning("currentOffscrennChange %d -> %d", s_ActiveOffscreenIndex, dstIndex);
+	s_ActiveOffscreenIndex = dstIndex;
 }
 
 
@@ -158,7 +190,6 @@ CubismRendererDx9::~CubismRendererDx9()
 		if (_offscreenBuffers[i]) { _offscreenBuffers[i]->Destroy(); delete _offscreenBuffers[i]; }
 	}
 	_offscreenBuffers.Clear();
-	_offscreenOwnerDrawableIndex.Clear();
 	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
 	_offscreenSettings.Clear();
 
@@ -250,7 +281,6 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 		if (_offscreenBuffers[i]) { _offscreenBuffers[i]->Destroy(); delete _offscreenBuffers[i]; }
 	}
 	_offscreenBuffers.Clear();
-	_offscreenOwnerDrawableIndex.Clear();
 	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
 	_offscreenSettings.Clear();
 
@@ -258,7 +288,6 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 	if (offscreenCount > 0)
 	{
 		_offscreenBuffers.Resize(offscreenCount);
-		_offscreenOwnerDrawableIndex.Resize(offscreenCount);
 		_offscreenSettings.Resize(offscreenCount);
 		for (csmInt32 i = 0; i < offscreenCount; ++i)
 		{
@@ -266,15 +295,24 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 			_offscreenBuffers[i]->Create(g_dev, _modelRenderTargetWidth, _modelRenderTargetHeight, D3DFMT_A8R8G8B8);
 
 			CubismIdHandle ownerId = model->GetOffscreenOwnerId(i);
-			csmInt32 ownerDrawableIndex = -1;
-			for (csmInt32 d = 0; d < model->GetDrawableCount(); ++d)
+			csmInt32 ownerPartsIndex = model->GetPartIndex(ownerId);
+
+			// currentPartsIndexは転写先のOffscreenPartsを示す。
+			csmInt32 currentPartsIndex = model->GetPartParentPartIndex(ownerPartsIndex);
+			while (currentPartsIndex != -1)
 			{
-				if (model->GetDrawableId(d) == ownerId) { ownerDrawableIndex = d; break; }
+				if (model->GetPartOffscreenIndices()[currentPartsIndex] != CubismModel::CubismNoIndex_Offscreen) {
+					break;
+				}
+				currentPartsIndex = model->GetPartParentPartIndex(currentPartsIndex);
 			}
-			_offscreenOwnerDrawableIndex[i] = ownerDrawableIndex;
+			csmInt32 offscreenTargetIndex = -1;
+			if (currentPartsIndex != -1) {
+				offscreenTargetIndex = model->GetPartOffscreenIndices()[currentPartsIndex];
+			}
 
 			_offscreenSettings[i] = new OffscreenShaderSetting();
-			_offscreenSettings[i]->Initialize(i, ownerDrawableIndex); // ownerDrawableIndex を転写元として暫定利用
+			_offscreenSettings[i]->Initialize(i, offscreenTargetIndex); // ownerPartsIndex を転写元として暫定利用
 		}
 	}
 }
@@ -628,25 +666,21 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         if (e.IsOffscreen)
         {
             DrawOffscreen(_offscreenSettings[e.Index]);
-            CubismLogWarning("%d offset index:%d target:%d", i, e.Index, _offscreenSettings[e.Index]->GetTransferOffscreenIndex());
+            CubismLogWarning("%d offset index:%d target:%d id:%s", i, e.Index, _offscreenSettings[e.Index]->GetTransferOffscreenIndex(), GetModel()->GetOffscreenOwnerId(e.Index)->GetString().GetRawString());
         }
         else
         {
             DrawDrawable(_drawable[e.Index]);
-            CubismLogWarning("%d drawable index:%d target:%d", i, e.Index, _drawable[e.Index]->GetOffscreenIndex());
+            CubismLogWarning("%d drawable index:%d target:%d id:%s", i, e.Index, _drawable[e.Index]->GetOffscreenIndex(), GetModel()->GetDrawableId(e.Index)->GetString().GetRawString());
         }
     }
 
     // フレーム末尾でオフスクリーンが開いていれば閉じて転写
-    if (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex < (csmInt32)_offscreenBuffers.GetSize())
+	while (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex < (csmInt32)_offscreenBuffers.GetSize())
     {
         CubismOffscreenFrame_Dx9* off = _offscreenBuffers[s_ActiveOffscreenIndex];
-        if (off && off->IsValid())
-        {
-            off->EndDraw(g_dev);
-            TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
-        }
-        s_ActiveOffscreenIndex = -1;
+        if (off && off->IsValid()) { off->EndDraw(g_dev); }
+		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, GetModel(), s_ActiveOffscreenIndex);
     }
 }
 
@@ -654,26 +688,22 @@ void CubismRendererDx9::DrawOffscreen(OffscreenShaderSetting* offscreenSetting)
 {
 	// Offscreen エントリ＝開始合図として扱う（転写はクローズ時に実施）
 	if (!offscreenSetting) return;
-	csmInt32 idx = offscreenSetting->GetTransferOffscreenIndex();
+	csmInt32 idx = offscreenSetting->GetOffscreenIndex();
 	if (idx < 0 || idx >= (csmInt32)_offscreenBuffers.GetSize()) return;
 	CubismOffscreenFrame_Dx9* target = _offscreenBuffers[idx];
 	if (!target || !target->IsValid()) return;
 
 	// 既に他のオフスクリーンが Begin 済みなら閉じて転写
-	if (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex != idx)
+	while (s_ActiveOffscreenIndex >= 0 && s_ActiveOffscreenIndex != offscreenSetting->GetTransferOffscreenIndex())
 	{
 		CubismOffscreenFrame_Dx9* prev = _offscreenBuffers[s_ActiveOffscreenIndex];
 		if (prev && prev->IsValid()) { prev->EndDraw(g_dev); }
-		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
-		s_ActiveOffscreenIndex = -1;
+		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, GetModel(), s_ActiveOffscreenIndex);
 	}
 
 	// まだ Begin していなければ開始（クリア: 透明）
-	if (s_ActiveOffscreenIndex < 0)
-	{
-		target->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0, 0, 0, 0));
-		s_ActiveOffscreenIndex = idx;
-	}
+	target->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0, 0, 0, 0));
+	s_ActiveOffscreenIndex = idx;
 }
 
 void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
@@ -682,12 +712,11 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	if (!GetModel()->GetDrawableDynamicFlagIsVisible(drawableSetting->GetDrawableIndex())) { drawableSetting->GetDiffuse(); return; }
 
 	// アクティブなオフスクリーンと対象DrawableのオフスクリーンIndexが異なる場合はクローズ＋転写
-	if (s_ActiveOffscreenIndex >= 0 && drawableSetting->GetOffscreenIndex() != s_ActiveOffscreenIndex)
+	while (s_ActiveOffscreenIndex >= 0 && drawableSetting->GetOffscreenIndex() != s_ActiveOffscreenIndex)
 	{
 		CubismOffscreenFrame_Dx9* prev = _offscreenBuffers[s_ActiveOffscreenIndex];
 		if (prev && prev->IsValid()) { prev->EndDraw(g_dev); }
-		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, s_ActiveOffscreenIndex);
-		s_ActiveOffscreenIndex = -1;
+		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, GetModel(), s_ActiveOffscreenIndex);
 	}
 
 	float opa = GetModel()->GetDrawableOpacity(drawableSetting->GetDrawableIndex());
@@ -723,6 +752,8 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
 
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
+	LPDIRECT3DSURFACE9 target = NULL; V(g_dev->GetRenderTarget(0, &target));
+	CubismLogWarning("DrawDrawable target:%p", target);
 	drawableSetting->DrawMesh(g_dev);
 	V(g_effect->EndPass()); V(g_effect->End());
 }
@@ -1100,8 +1131,6 @@ void OffscreenShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
 }
 
 int OffscreenShaderSetting::GetMaskCount() { return masks.GetSize(); }
-int OffscreenShaderSetting::GetTextureIndex() { return textureIndex; }
-int OffscreenShaderSetting::GetDrawableIndex() { return drawableIndex; }
 int OffscreenShaderSetting::GetMask(int i) { return masks[i]; }
 D3DXCOLOR OffscreenShaderSetting::GetDiffuse() { D3DXCOLOR ret = diffuse; diffuse = D3DXCOLOR(1,1,1,1); return ret; }
 D3DXCOLOR OffscreenShaderSetting::GetMultipleColor() { return D3DXCOLOR(1,1,1,1); }

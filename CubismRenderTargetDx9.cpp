@@ -95,7 +95,7 @@ void CubismOffscreenFrame_Dx9::EndDraw(LPDIRECT3DDEVICE9 device)
 
     // Restore previous RT
     device->SetRenderTarget(0, _prevSurface);
-    if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
+    //if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
 
     // Restore viewport
     device->SetViewport(&_prevViewport);

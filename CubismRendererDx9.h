@@ -89,8 +89,6 @@ public:
 		, vertexStart(0)
 		, indiceCount(0)
 		, indiceStart(0)
-		, drawableIndex(-1)
-		, textureIndex(-1)
 		, isInvertMask(false)
 		, drawtype(Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal)
 		, maskingType(DrawingMaskingMode::DrawMask)
@@ -106,6 +104,7 @@ public:
 	{
 		_offscreenIndex = offscreenIndex;
 		_transferOffscreenIndex = transferOffscreenIndex;
+
 	}
 
 	csmInt32 GetOffscreenIndex() const { return _offscreenIndex; }
@@ -117,7 +116,6 @@ public:
 	void DrawMaskingMesh(LPDIRECT3DDEVICE9 dev);
 	int GetMaskCount();
 	int GetTextureIndex();
-	int GetDrawableIndex();
 	int GetMask(int i);
 	D3DXCOLOR GetDiffuse();
 	D3DXCOLOR GetMultipleColor();
@@ -129,7 +127,6 @@ public:
 	// 公開用簡易初期設定（外部で直接設定される想定）
 	void SetGeometry(int vStart, int vCount, int iStart, int iCount)
 	{ vertexStart = vStart; vertexCount = vCount; indiceStart = iStart; indiceCount = iCount; }
-	void SetIndicesTextureDrawable(int drawIdx, int texIdx) { drawableIndex = drawIdx; textureIndex = texIdx; }
 	void SetMaskInfo(const csmVector<int>& src, bool invert) { masks = src; isInvertMask = invert; }
 	void SetBlendAndCulling(Rendering::CubismRenderer::CubismBlendMode bt, bool noCull) { drawtype = bt; nonCulling = noCull; }
 
@@ -139,7 +136,6 @@ private:
 
 	// Drawable 相当の保持情報
 	int vertexCount; int vertexStart; int indiceCount; int indiceStart; 
-	int drawableIndex; int textureIndex; 
 	csmVector<int> masks; bool isInvertMask; 
 	Rendering::CubismRenderer::CubismBlendMode drawtype; DrawingMaskingMode maskingType; bool nonCulling; 
 	D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements; 
@@ -184,6 +180,15 @@ protected:
 	void DrawDrawable(DrawableShaderSetting* drawableSetting);
 	void DrawOffscreen(OffscreenShaderSetting* offscreenSetting);
 
+	// 追加: オフスクリーン転写処理（クラス関数化, 非static）
+	void TransferOffscreenBuffer(
+		LPDIRECT3DDEVICE9 dev,
+		LPD3DXEFFECT effect,
+		csmVector<CubismOffscreenFrame_Dx9*>& buffers,
+		csmVector<OffscreenShaderSetting*>& settings,
+		CubismModel* model,
+		csmInt32 srcIndex);
+
 	virtual void DrawMesh(csmInt32 textureNo, csmInt32 indexCount, csmInt32 vertexCount
 		, csmUint16* indexArray, csmFloat32* vertexArray, csmFloat32* uvArray
 		, csmFloat32 opacity, CubismBlendMode colorBlendMode, csmBool invertedMask)
@@ -203,7 +208,6 @@ protected:
 
 	// 追加: モデルの Offscreen 数に対応するオフスクリーンフレーム
 	csmVector<CubismOffscreenFrame_Dx9*> _offscreenBuffers;
-	csmVector<csmInt32> _offscreenOwnerDrawableIndex; // 各OffscreenのオーナーDrawableインデックス
 	csmVector<OffscreenShaderSetting*> _offscreenSettings; // Offscreen設定
 
 	LPDIRECT3DVERTEXBUFFER9 _vertex;
