@@ -17,6 +17,43 @@ using live2d::framework::L2DModelMatrix;
 
 #define V(hr) if(((HRESULT)(hr)) < 0){live2d::UtDebug::error("%s(%d) DirectX Error[ %s ]\n",__FILE__,__LINE__,#hr);} 
 
+// ブレンド定数（Color/Alpha）
+namespace L2DBlend
+{
+	// カラーブレンド種別（Core::csmColorBlendType_* と同順）
+	enum ColorBlendType
+	{
+		ColorBlend_Normal = 0,
+		ColorBlend_Add = 1,
+		ColorBlend_AddGlow = 2,
+		ColorBlend_Darken = 3,
+		ColorBlend_Multiply = 4,
+		ColorBlend_ColorBurn = 5,
+		ColorBlend_LinearBurn = 6,
+		ColorBlend_Lighten = 7,
+		ColorBlend_Screen = 8,
+		ColorBlend_ColorDodge = 9,
+		ColorBlend_Overlay = 10,
+		ColorBlend_SoftLight = 11,
+		ColorBlend_HardLight = 12,
+		ColorBlend_LinearLight = 13,
+		ColorBlend_Hue = 14,
+		ColorBlend_Color = 15,
+		ColorBlend_AddCompatible = 16,		// SetRenderState用
+		ColorBlend_MultiplyCompatible = 17  // SetRenderState用
+	};
+
+	// アルファブレンド種別（Core::csmAlphaBlendType_* と同順）
+	enum AlphaBlendType
+	{
+		AlphaBlend_Over = 0,			 // SetRenderState用
+		AlphaBlend_Atop = 1,
+		AlphaBlend_Out = 2,
+		AlphaBlend_ConjointOver = 3,
+		AlphaBlend_DisjointOver = 4
+	};
+}
+
 struct L2DAPPVertex
 {
 	float x, y, z;
@@ -74,8 +111,24 @@ public:
 
 	int GetOffscreenIndex() const { return offscreenIndex; }
 
+	// 追加: ブレンド/自己バッファ利用の取得
+	csmInt32 GetColorBlendType() const { return colorBlendType; }
+	csmInt32 GetAlphaBlendType() const { return alphaBlendType; }
+	bool GetUsedSelfBuffer() const { return usedSelfBuffer; }
+
 private:
-	int vertexCount; int vertexStart; int indiceCount; int indiceStart; int drawableIndex; int textureIndex; csmVector<int> masks; bool isInvertMask; Rendering::CubismRenderer::CubismBlendMode drawtype; DrawingMaskingMode maskingType; bool nonCulling; D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements; int offscreenIndex; // 親パーツから辿ったオフスクリーンIndex (-1で無し)
+	int vertexCount; int vertexStart; 
+	int indiceCount; int indiceStart; 
+	int drawableIndex; int textureIndex; 
+	csmVector<int> masks; bool isInvertMask; 
+	Rendering::CubismRenderer::CubismBlendMode drawtype; 
+	DrawingMaskingMode maskingType; bool nonCulling; 
+	D3DXCOLOR diffuse; 
+	csmVector<CubismIdHandle> userdataElements; 
+	int offscreenIndex; // 親パーツから辿ったオフスクリーンIndex (-1で無し)
+	csmInt32 colorBlendType;
+	csmInt32 alphaBlendType;
+	bool usedSelfBuffer;
 };
 
 // 追加: Offscreen 用設定クラス（拡張）
@@ -100,12 +153,7 @@ public:
 
 	// offscreenIndex: このオフスクリーン自身のIndex
 	// transferOffscreenIndex: 描画時に転写(ブリット)元となる別オフスクリーンIndex (-1で未設定/自前テクスチャ)
-	void Initialize(csmInt32 offscreenIndex, csmInt32 transferOffscreenIndex)
-	{
-		_offscreenIndex = offscreenIndex;
-		_transferOffscreenIndex = transferOffscreenIndex;
-
-	}
+	void Initialize(Csm::CubismModel* model, csmInt32 offscreenIndex);
 
 	csmInt32 GetOffscreenIndex() const { return _offscreenIndex; }
 	csmInt32 GetTransferOffscreenIndex() const { return _transferOffscreenIndex; }
@@ -138,7 +186,10 @@ private:
 	int vertexCount; int vertexStart; int indiceCount; int indiceStart; 
 	csmVector<int> masks; bool isInvertMask; 
 	Rendering::CubismRenderer::CubismBlendMode drawtype; DrawingMaskingMode maskingType; bool nonCulling; 
-	D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements; 
+	D3DXCOLOR diffuse; csmVector<CubismIdHandle> userdataElements;
+	csmInt32 colorBlendType;
+	csmInt32 alphaBlendType;
+	bool usedSelfBuffer;
 };
 
 class CubismRendererDx9 : public CubismRenderer

@@ -18,6 +18,45 @@ LPD3DXEFFECT		CubismRendererDx9::g_effect = NULL;
 // 現在 Begin 中のオフスクリーンを追跡（フレーム内）
 static csmInt32 s_ActiveOffscreenIndex = -1;
 
+// RTコピー用
+static LPDIRECT3DTEXTURE9 s_rtCopyTex = NULL;
+static csmUint32 s_rtCopyW = 0, s_rtCopyH = 0;
+
+static bool getUseCopyBuffer(csmInt32 colorBlendType, csmInt32 alphaBlendType) {
+	if( alphaBlendType != L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
+		return true;
+	}
+	switch (colorBlendType)
+	{
+	case L2DBlend::ColorBlendType::ColorBlend_Normal:
+	case L2DBlend::ColorBlendType::ColorBlend_AddCompatible:
+	case L2DBlend::ColorBlendType::ColorBlend_MultiplyCompatible:
+		return true;
+	default:
+		break;
+	}
+	return false;
+}
+
+static void EnsureRtCopyTexture(LPDIRECT3DDEVICE9 dev, csmUint32 w, csmUint32 h)
+{
+	if (s_rtCopyTex && s_rtCopyW == w && s_rtCopyH == h) return;
+	if (s_rtCopyTex) { s_rtCopyTex->Release(); s_rtCopyTex = NULL; }
+	s_rtCopyW = w; s_rtCopyH = h;
+	V(dev->CreateTexture(w, h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &s_rtCopyTex, NULL));
+}
+
+static void CopyCurrentRTToTexture(LPDIRECT3DDEVICE9 dev)
+{
+	LPDIRECT3DSURFACE9 src = NULL; V(dev->GetRenderTarget(0, &src));
+	D3DSURFACE_DESC d; src->GetDesc(&d);
+	EnsureRtCopyTexture(dev, d.Width, d.Height);
+	LPDIRECT3DSURFACE9 dst = NULL; V(s_rtCopyTex->GetSurfaceLevel(0, &dst));
+	V(dev->StretchRect(src, NULL, dst, NULL, D3DTEXF_NONE));
+	if (dst) dst->Release();
+	if (src) src->Release();
+}
+
 // オフスクリーンの内容を転写（SRCALPHA考慮）
 void CubismRendererDx9::TransferOffscreenBuffer(
 	LPDIRECT3DDEVICE9 dev,
@@ -126,6 +165,7 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	quad[3] = { w   + ox, h   + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(dev->SetFVF(TL_FVF));
 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+	V(g_effect->SetBool("isPremultipliedAlpha", true));
 
 
 	LPDIRECT3DSURFACE9 target = NULL; V(dev->GetRenderTarget(0, &target));
@@ -195,6 +235,8 @@ CubismRendererDx9::~CubismRendererDx9()
 
 	if (_vertex) { _vertex->Release(); _vertex = NULL; }
 	if (_indice) { _indice->Release(); _indice = NULL; }
+
+	if (s_rtCopyTex) { s_rtCopyTex->Release(); s_rtCopyTex = NULL; s_rtCopyW = s_rtCopyH = 0; }
 }
 
 /**
@@ -294,25 +336,9 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 			_offscreenBuffers[i] = new CubismOffscreenFrame_Dx9();
 			_offscreenBuffers[i]->Create(g_dev, _modelRenderTargetWidth, _modelRenderTargetHeight, D3DFMT_A8R8G8B8);
 
-			CubismIdHandle ownerId = model->GetOffscreenOwnerId(i);
-			csmInt32 ownerPartsIndex = model->GetPartIndex(ownerId);
-
-			// currentPartsIndexは転写先のOffscreenPartsを示す。
-			csmInt32 currentPartsIndex = model->GetPartParentPartIndex(ownerPartsIndex);
-			while (currentPartsIndex != -1)
-			{
-				if (model->GetPartOffscreenIndices()[currentPartsIndex] != CubismModel::CubismNoIndex_Offscreen) {
-					break;
-				}
-				currentPartsIndex = model->GetPartParentPartIndex(currentPartsIndex);
-			}
-			csmInt32 offscreenTargetIndex = -1;
-			if (currentPartsIndex != -1) {
-				offscreenTargetIndex = model->GetPartOffscreenIndices()[currentPartsIndex];
-			}
 
 			_offscreenSettings[i] = new OffscreenShaderSetting();
-			_offscreenSettings[i]->Initialize(i, offscreenTargetIndex); // ownerPartsIndex を転写元として暫定利用
+			_offscreenSettings[i]->Initialize(model, i); // ownerPartsIndex を転写元として暫定利用
 		}
 	}
 }
@@ -456,6 +482,7 @@ void CubismRendererDx9::DrawMasking(
 		diffuse.b *= modelDiffuse.b;
 		diffuse.a *= modelDiffuse.a;
 		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+		V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
 
 		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
 		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
@@ -467,6 +494,10 @@ void CubismRendererDx9::DrawMasking(
 		int texnum = sort[i]->GetTextureIndex();
 		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
 		V(g_effect->SetTexture("TexMain", tex));
+
+		// ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）
+		V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
+		V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
 
 		UINT32	xxxx;
 		V(g_effect->Begin(&xxxx, 0));
@@ -751,6 +782,21 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
 	V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
 
+	// ブレンドタイプを渡す
+	V(g_effect->SetInt("colorBlendType", drawableSetting->GetColorBlendType()));
+	V(g_effect->SetInt("alphaBlendType", drawableSetting->GetAlphaBlendType()));
+
+	// usedSelfBuffer が真なら現在のRTをテクスチャコピーして渡す
+	if (drawableSetting->GetUsedSelfBuffer())
+	{
+		CopyCurrentRTToTexture(g_dev);
+		V(g_effect->SetTexture("OutputBuffer", s_rtCopyTex));
+	}
+	else
+	{
+		V(g_effect->SetTexture("OutputBuffer", NULL));
+	}
+
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
 	LPDIRECT3DSURFACE9 target = NULL; V(g_dev->GetRenderTarget(0, &target));
 	CubismLogWarning("DrawDrawable target:%p", target);
@@ -856,6 +902,12 @@ void DrawableShaderSetting::Initialize(CubismModel* model, int drawindex, int & 
 	{
 		masks[i] = model->GetDrawableMasks()[drawableIndex][i];
 	}
+
+	csmBlendMode blendMode = model->GetDrawableBlendModeType(drawableIndex);
+	colorBlendType = blendMode.GetColorBlendType();
+	alphaBlendType = blendMode.GetAlphaBlendType();
+	usedSelfBuffer = getUseCopyBuffer(colorBlendType, alphaBlendType);
+
 
 	// 親パーツを辿ってオフスクリーンIndexを探索
 	offscreenIndex = -1;
@@ -1056,6 +1108,35 @@ void DrawableShaderSetting::AddElements(const csmString & userDataValue)
 	}
 	buffer[bufferPos] = '\0';
 	userdataElements.PushBack(CubismFramework::GetIdManager()->GetId(buffer));
+}
+
+void OffscreenShaderSetting::Initialize(CubismModel* model, int offscreenindex)
+{
+	CubismIdHandle ownerId = model->GetOffscreenOwnerId(offscreenindex);
+	csmInt32 ownerPartsIndex = model->GetPartIndex(ownerId);
+
+	// currentPartsIndexは転写先のOffscreenPartsを示す。
+	csmInt32 currentPartsIndex = model->GetPartParentPartIndex(ownerPartsIndex);
+	while (currentPartsIndex != -1)
+	{
+		if (model->GetPartOffscreenIndices()[currentPartsIndex] != CubismModel::CubismNoIndex_Offscreen) {
+			break;
+		}
+		currentPartsIndex = model->GetPartParentPartIndex(currentPartsIndex);
+	}
+	csmInt32 offscreenTargetIndex = -1;
+	if (currentPartsIndex != -1) {
+		offscreenTargetIndex = model->GetPartOffscreenIndices()[currentPartsIndex];
+	}
+
+	_offscreenIndex = offscreenindex;
+	_transferOffscreenIndex = offscreenTargetIndex;
+
+
+	csmBlendMode blendMode = model->GetOffscreenBlendModeType(offscreenindex);
+	colorBlendType = blendMode.GetColorBlendType();
+	alphaBlendType = blendMode.GetAlphaBlendType();
+	usedSelfBuffer = getUseCopyBuffer(colorBlendType,alphaBlendType);
 }
 
 // OffscreenShaderSetting 実装
