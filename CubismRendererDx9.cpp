@@ -31,11 +31,11 @@ static bool getUseCopyBuffer(csmInt32 colorBlendType, csmInt32 alphaBlendType) {
 	case L2DBlend::ColorBlendType::ColorBlend_Normal:
 	case L2DBlend::ColorBlendType::ColorBlend_AddCompatible:
 	case L2DBlend::ColorBlendType::ColorBlend_MultiplyCompatible:
-		return true;
+		return false;
 	default:
 		break;
 	}
-	return false;
+	return true;
 }
 
 static void EnsureRtCopyTexture(LPDIRECT3DDEVICE9 dev, csmUint32 w, csmUint32 h)
@@ -73,10 +73,15 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	LPDIRECT3DTEXTURE9 srcTex = srcOff->GetTexture();
 	if (!srcTex) return;
 	// 転写先（-1 は現在のRT）
+	OffscreenShaderSetting* setting = NULL;
 	csmInt32 dstIndex = -1;
 	if (srcIndex < (csmInt32)settings.GetSize() && settings[srcIndex])
 	{
 		dstIndex = settings[srcIndex]->GetTransferOffscreenIndex();
+		setting = settings[srcIndex];
+	}
+	else {
+		return;
 	}
 
 	CubismLogWarning("offsetBake index:%d target:%d", srcIndex, dstIndex);
@@ -106,12 +111,48 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 		if (dstOff && dstOff->IsValid())
 		{
 			dstSurf = dstOff->GetSurface();
-			if (dstSurf) {
-				CubismLogWarning("offsetBake index:%d target:%d", srcIndex, dstIndex);
-				V(dev->SetRenderTarget(0, dstSurf)); 
-			}
 		}
 	}
+
+	// ここで「dstSurf の直前の中身」を s_rtCopyTex にコピーする（RT切替前）
+	if (dstSurf)
+	{
+		D3DSURFACE_DESC srcDesc; dstSurf->GetDesc(&srcDesc);
+		EnsureRtCopyTexture(dev, srcDesc.Width, srcDesc.Height);
+
+		LPDIRECT3DSURFACE9 dstLevel0 = nullptr;
+		V(s_rtCopyTex->GetSurfaceLevel(0, &dstLevel0));
+
+		if (srcDesc.MultiSampleType != D3DMULTISAMPLE_NONE)
+		{
+			// MSAA → 非MSAAへ一旦解決してから Texture へコピー
+			LPDIRECT3DSURFACE9 tmp = nullptr;
+			V(dev->CreateRenderTarget(srcDesc.Width, srcDesc.Height, srcDesc.Format,
+				D3DMULTISAMPLE_NONE, 0, FALSE, &tmp, NULL));
+			if (tmp)
+			{
+				V(dev->StretchRect(dstSurf, nullptr, tmp, nullptr, D3DTEXF_NONE));
+				V(dev->StretchRect(tmp, nullptr, dstLevel0, nullptr, D3DTEXF_NONE));
+				tmp->Release();
+			}
+		}
+		else
+		{
+			V(dev->StretchRect(dstSurf, nullptr, dstLevel0, nullptr, D3DTEXF_NONE));
+		}
+
+		if (dstLevel0) dstLevel0->Release();
+
+		// XRGB系のときはαが0になる対策フラグ（PS側で alpha=1 に補正）
+		const bool outBufIsXRGB =
+			(srcDesc.Format == D3DFMT_X8R8G8B8) || (srcDesc.Format == D3DFMT_X8B8G8R8);
+		//V(effect->SetBool("outBufIsXRGB", outBufIsXRGB));
+	}
+
+	// 以降、描画RTを設定
+	if (dstSurf) { V(dev->SetRenderTarget(0, dstSurf)); }
+
+	V(effect->SetTechnique("TransferOffscreenNomask"));
 
 	// 転写先に合わせてビューポート設定
 	D3DSURFACE_DESC dstDesc; dstSurf->GetDesc(&dstDesc);
@@ -126,18 +167,10 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(effect->SetMatrix("g_mWorldViewProjection", &id));
 
 	V(dev->BeginScene());
-
-	// ブレンド
-	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));
-	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-	V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-	V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
 	V(dev->SetRenderState(D3DRS_LIGHTING, FALSE));
 
 	// テクスチャ
-	V(dev->SetTexture(0, srcTex));
+	V(effect->SetTexture("TexMain", srcTex));
 	V(dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR));
 	V(dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR));
 	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP));
@@ -151,25 +184,46 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE));
 	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE));
 
+	// ブレンドタイプを渡す
+	V(effect->SetInt("colorBlendType", setting->GetColorBlendType()));
+	V(effect->SetInt("alphaBlendType", setting->GetAlphaBlendType()));
+
+	// usedSelfBuffer が真なら現在のRTをテクスチャコピーして渡す
+	if (setting->GetUsedSelfBuffer())
+	{
+		V(effect->SetTexture("OutputBuffer", s_rtCopyTex));
+		V(effect->SetBool("useOutBuffer", true));
+	}
+	else
+	{
+		V(effect->SetTexture("OutputBuffer", NULL));
+		V(effect->SetBool("useOutBuffer", false));
+	}
+	V(effect->SetBool("isDebug", true));
+
 	// フルスクリーンクワッド（頂点カラーに不透明度適用）
 	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
 	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 	TLVertex quad[4];
 	const float w = static_cast<float>(dstDesc.Width);
 	const float h = static_cast<float>(dstDesc.Height);
-	const float ox = -0.5f, oy = -0.5f;
+	const float ox = -1.0f, oy = -0.5f;
 	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, ownerOpacity);
 	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
-	quad[1] = { w   + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
-	quad[2] = { 0.0f + ox, h   + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
-	quad[3] = { w   + ox, h   + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
+	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
+	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
+	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(dev->SetFVF(TL_FVF));
+
+	V(effect->SetBool("isPremultipliedAlpha", true));
+	setting->SetDrawSetting(dev);
+
+	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
-	V(g_effect->SetBool("isPremultipliedAlpha", true));
+	V(effect->EndPass()); V(effect->End());
 
 
 	LPDIRECT3DSURFACE9 target = NULL; V(dev->GetRenderTarget(0, &target));
-	CubismLogWarning("DrawOffscreen target:%p", target);
 
 	// 後処理
 	V(dev->SetTexture(0, NULL));
@@ -190,12 +244,12 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(effect->SetMatrix("g_mWorldViewProjection", &prevFxMvp));
 	V(dev->BeginScene());
 
-	V(g_dev->SetIndices(_indice));
-	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+	V(dev->SetIndices(_indice));
+	V(dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
 
 	V(dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	CubismLogWarning("currentOffscrennChange %d -> %d", s_ActiveOffscreenIndex, dstIndex);
+	CubismLogWarning("currentOffscrennChange %d -> %d %s", s_ActiveOffscreenIndex, dstIndex, setting->GetUsedSelfBuffer() ? "tr" : "fa");
 	s_ActiveOffscreenIndex = dstIndex;
 }
 
@@ -697,12 +751,20 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         if (e.IsOffscreen)
         {
             DrawOffscreen(_offscreenSettings[e.Index]);
-            CubismLogWarning("%d offset index:%d target:%d id:%s", i, e.Index, _offscreenSettings[e.Index]->GetTransferOffscreenIndex(), GetModel()->GetOffscreenOwnerId(e.Index)->GetString().GetRawString());
+            CubismLogWarning("%d offset index:%d target:%d id:%s useBuff:%s", 
+				i, e.Index,
+				_offscreenSettings[e.Index]->GetTransferOffscreenIndex(),
+				GetModel()->GetOffscreenOwnerId(e.Index)->GetString().GetRawString(),
+				_offscreenSettings[e.Index]->GetUsedSelfBuffer() ? "true" : "false");
         }
         else
         {
             DrawDrawable(_drawable[e.Index]);
-            CubismLogWarning("%d drawable index:%d target:%d id:%s", i, e.Index, _drawable[e.Index]->GetOffscreenIndex(), GetModel()->GetDrawableId(e.Index)->GetString().GetRawString());
+            CubismLogWarning("%d drawable index:%d target:%d id:%s useBuff:%s", 
+				i, e.Index,
+				_drawable[e.Index]->GetOffscreenIndex(),
+				GetModel()->GetDrawableId(e.Index)->GetString().GetRawString(),
+				_drawable[e.Index]->GetUsedSelfBuffer() ? "true" : "false");
         }
     }
 
@@ -791,15 +853,17 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	{
 		CopyCurrentRTToTexture(g_dev);
 		V(g_effect->SetTexture("OutputBuffer", s_rtCopyTex));
+		V(g_effect->SetBool("useOutBuffer", true));
 	}
 	else
 	{
 		V(g_effect->SetTexture("OutputBuffer", NULL));
+		V(g_effect->SetBool("useOutBuffer", false));
 	}
+	V(g_effect->SetBool("isDebug", false));
 
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
 	LPDIRECT3DSURFACE9 target = NULL; V(g_dev->GetRenderTarget(0, &target));
-	CubismLogWarning("DrawDrawable target:%p", target);
 	drawableSetting->DrawMesh(g_dev);
 	V(g_effect->EndPass()); V(g_effect->End());
 }
@@ -945,27 +1009,34 @@ void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
 	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	switch (drawtype)
-	{
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
-		break;
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
-		break;
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
-	default:
+	if (usedSelfBuffer) {
 		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
-		break;
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ZERO));
+	}else{
+		switch (drawtype)
+		{
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+			break;
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+			break;
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
+		default:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+			break;
+		}
 	}
 
 	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
@@ -1140,36 +1211,43 @@ void OffscreenShaderSetting::Initialize(CubismModel* model, int offscreenindex)
 }
 
 // OffscreenShaderSetting 実装
-void OffscreenShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
+void OffscreenShaderSetting::SetDrawSetting(LPDIRECT3DDEVICE9 dev)
 {
 	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
 	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
 	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	switch (drawtype)
-	{
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
-		break;
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
-		break;
-	case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
-	default:
+	if (usedSelfBuffer) {
 		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
-		break;
+		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO));
+		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ZERO));
 	}
-	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
+	else {
+		switch (drawtype)
+		{
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+			break;
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
+			break;
+		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
+		default:
+			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
+			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
+			break;
+		}
+	}
 }
 
 void OffscreenShaderSetting::DrawMask(LPDIRECT3DDEVICE9 dev)

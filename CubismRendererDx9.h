@@ -159,7 +159,7 @@ public:
 	csmInt32 GetTransferOffscreenIndex() const { return _transferOffscreenIndex; }
 
 	// DrawableShaderSetting 互換 API
-	void DrawMesh(LPDIRECT3DDEVICE9 dev);
+	void SetDrawSetting(LPDIRECT3DDEVICE9 dev);
 	void DrawMask(LPDIRECT3DDEVICE9 dev);
 	void DrawMaskingMesh(LPDIRECT3DDEVICE9 dev);
 	int GetMaskCount();
@@ -177,6 +177,10 @@ public:
 	{ vertexStart = vStart; vertexCount = vCount; indiceStart = iStart; indiceCount = iCount; }
 	void SetMaskInfo(const csmVector<int>& src, bool invert) { masks = src; isInvertMask = invert; }
 	void SetBlendAndCulling(Rendering::CubismRenderer::CubismBlendMode bt, bool noCull) { drawtype = bt; nonCulling = noCull; }
+
+	csmInt32 GetColorBlendType() const { return colorBlendType; }
+	csmInt32 GetAlphaBlendType() const { return alphaBlendType; }
+	bool GetUsedSelfBuffer() const { return usedSelfBuffer; }
 
 private:
 	csmInt32 _offscreenIndex;              // このオフスクリーンのインデックス
