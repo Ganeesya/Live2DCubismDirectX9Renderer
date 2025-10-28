@@ -199,7 +199,8 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 		V(effect->SetTexture("OutputBuffer", NULL));
 		V(effect->SetBool("useOutBuffer", false));
 	}
-	V(effect->SetBool("isDebug", true));
+	V(effect->SetBool("isDebug", false));
+	V(effect->SetFloat("drawableOpacity", ownerOpacity));
 
 	// フルスクリーンクワッド（頂点カラーに不透明度適用）
 	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
@@ -208,14 +209,14 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	const float w = static_cast<float>(dstDesc.Width);
 	const float h = static_cast<float>(dstDesc.Height);
 	const float ox = -1.0f, oy = -0.5f;
-	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, ownerOpacity);
+	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
 	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
 	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
 	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
 	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(dev->SetFVF(TL_FVF));
 
-	V(effect->SetBool("isPremultipliedAlpha", true));
+	V(effect->SetBool("isPremultipliedAlpha", false));
 	setting->SetDrawSetting(dev);
 
 	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
@@ -677,7 +678,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
     D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
 
     V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
-    V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
+	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
     // 頂点更新
     UpdateVertexs();
@@ -860,7 +861,8 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 		V(g_effect->SetTexture("OutputBuffer", NULL));
 		V(g_effect->SetBool("useOutBuffer", false));
 	}
-	V(g_effect->SetBool("isDebug", false));
+	V(g_effect->SetBool("isDebug", true));
+	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
 	LPDIRECT3DSURFACE9 target = NULL; V(g_dev->GetRenderTarget(0, &target));
@@ -1006,6 +1008,8 @@ void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 	{
 		V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW));
 	}
+
+
 
 	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
 	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));

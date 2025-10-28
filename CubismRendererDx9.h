@@ -177,7 +177,7 @@ public:
 	{ vertexStart = vStart; vertexCount = vCount; indiceStart = iStart; indiceCount = iCount; }
 	void SetMaskInfo(const csmVector<int>& src, bool invert) { masks = src; isInvertMask = invert; }
 	void SetBlendAndCulling(Rendering::CubismRenderer::CubismBlendMode bt, bool noCull) { drawtype = bt; nonCulling = noCull; }
-
+	
 	csmInt32 GetColorBlendType() const { return colorBlendType; }
 	csmInt32 GetAlphaBlendType() const { return alphaBlendType; }
 	bool GetUsedSelfBuffer() const { return usedSelfBuffer; }
