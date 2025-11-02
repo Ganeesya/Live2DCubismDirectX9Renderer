@@ -23,17 +23,17 @@ static LPDIRECT3DTEXTURE9 s_rtCopyTex = NULL;
 static csmUint32 s_rtCopyW = 0, s_rtCopyH = 0;
 
 static bool getUseCopyBuffer(csmInt32 colorBlendType, csmInt32 alphaBlendType) {
-	if( alphaBlendType != L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
-		return true;
-	}
 	switch (colorBlendType)
 	{
-	case L2DBlend::ColorBlendType::ColorBlend_Normal:
-	case L2DBlend::ColorBlendType::ColorBlend_AddCompatible:
-	case L2DBlend::ColorBlendType::ColorBlend_MultiplyCompatible:
+	case ::csmColorBlendType_Normal: // Normal
+	case ::csmColorBlendType_AddCompatible: // Additive(compatible)
+	case ::csmColorBlendType_MultiplyCompatible: // Multiplicative(compatible)
 		return false;
 	default:
 		break;
+	}
+	if( alphaBlendType != L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
+		return true;
 	}
 	return true;
 }
@@ -752,20 +752,24 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         if (e.IsOffscreen)
         {
             DrawOffscreen(_offscreenSettings[e.Index]);
-            CubismLogWarning("%d offset index:%d target:%d id:%s useBuff:%s", 
+            CubismLogWarning("%d offset index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d", 
 				i, e.Index,
 				_offscreenSettings[e.Index]->GetTransferOffscreenIndex(),
 				GetModel()->GetOffscreenOwnerId(e.Index)->GetString().GetRawString(),
-				_offscreenSettings[e.Index]->GetUsedSelfBuffer() ? "true" : "false");
+				_offscreenSettings[e.Index]->GetUsedSelfBuffer() ? "true " : "false",
+				_offscreenSettings[e.Index]->GetColorBlendType(),
+				_offscreenSettings[e.Index]->GetAlphaBlendType());
         }
         else
         {
             DrawDrawable(_drawable[e.Index]);
-            CubismLogWarning("%d drawable index:%d target:%d id:%s useBuff:%s", 
+            CubismLogWarning("%d drawable index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d", 
 				i, e.Index,
 				_drawable[e.Index]->GetOffscreenIndex(),
 				GetModel()->GetDrawableId(e.Index)->GetString().GetRawString(),
-				_drawable[e.Index]->GetUsedSelfBuffer() ? "true" : "false");
+				_drawable[e.Index]->GetUsedSelfBuffer() ? "true " : "false",
+				_drawable[e.Index]->GetColorBlendType(),
+				_drawable[e.Index]->GetAlphaBlendType());
         }
     }
 
