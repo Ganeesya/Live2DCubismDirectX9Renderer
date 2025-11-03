@@ -25,15 +25,14 @@ static csmUint32 s_rtCopyW = 0, s_rtCopyH = 0;
 static bool getUseCopyBuffer(csmInt32 colorBlendType, csmInt32 alphaBlendType) {
 	switch (colorBlendType)
 	{
-	case ::csmColorBlendType_Normal: // Normal
 	case ::csmColorBlendType_AddCompatible: // Additive(compatible)
 	case ::csmColorBlendType_MultiplyCompatible: // Multiplicative(compatible)
 		return false;
 	default:
 		break;
 	}
-	if( alphaBlendType != L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
-		return true;
+	if( alphaBlendType == L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
+		return false;
 	}
 	return true;
 }
@@ -152,7 +151,17 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	// 以降、描画RTを設定
 	if (dstSurf) { V(dev->SetRenderTarget(0, dstSurf)); }
 
-	V(effect->SetTechnique("TransferOffscreenNomask"));
+	if (setting->GetMaskCount() > 0)
+	{
+		MakeMaskForOffscreen(setting->GetOffscreenIndex());
+		V(g_effect->SetTexture("Mask", g_maskTexture));
+		V(g_effect->SetTechnique("TransferOffscreenMasked"));
+		V(g_effect->SetBool("isInvertMask", setting->GetIsInvertMask()));
+	}
+	else
+	{
+		V(effect->SetTechnique("TransferOffscreenNomask"));
+	}
 
 	// 転写先に合わせてビューポート設定
 	D3DSURFACE_DESC dstDesc; dstSurf->GetDesc(&dstDesc);
@@ -250,7 +259,11 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 
 	V(dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	CubismLogWarning("currentOffscrennChange %d -> %d %s", s_ActiveOffscreenIndex, dstIndex, setting->GetUsedSelfBuffer() ? "tr" : "fa");
+	CubismLogWarning("currentOffscrennChange %d -> %d %s color:%2d alpha:%2d",
+		s_ActiveOffscreenIndex,
+		dstIndex, setting->GetUsedSelfBuffer() ? "tr" : "fa",
+		setting->GetColorBlendType(),
+		setting->GetAlphaBlendType());
 	s_ActiveOffscreenIndex = dstIndex;
 }
 
@@ -515,7 +528,7 @@ void CubismRendererDx9::DrawMasking(
 		float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
 		if (sort[i]->GetMaskCount() > 0)
 		{
-			MakeMask(sort[i]->GetDrawableIndex());
+			MakeMaskForDrawable(sort[i]->GetDrawableIndex());
 
 			V(g_effect->SetTexture("Mask", g_maskTexture));
 
@@ -821,7 +834,7 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 
 	if (drawableSetting->GetMaskCount() > 0)
 	{
-		MakeMask(drawableSetting->GetDrawableIndex());
+		MakeMaskForDrawable(drawableSetting->GetDrawableIndex());
 		V(g_effect->SetTexture("Mask", g_maskTexture));
 		V(g_effect->SetTechnique("RenderSceneMasked"));
 		V(g_effect->SetBool("isInvertMask", drawableSetting->GetIsInvertMask()));
@@ -895,10 +908,54 @@ void CubismRendererDx9::UpdateVertexs()
 	 _vertex->Unlock();
  }
 
- void CubismRendererDx9::MakeMask(int tindex)
+void CubismRendererDx9::MakeMaskForOffscreen(int tindex)
+{
+	LPDIRECT3DSURFACE9	preRenderSurface;
+	V(g_dev->GetRenderTarget(0, &preRenderSurface));
+	V(g_effect->SetTexture("Mask", NULL));
+	V(g_dev->SetRenderTarget(0, g_maskSurface));
+
+	V(g_dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0));
+
+	V(g_dev->BeginScene());
+	V(g_effect->SetTechnique("RenderMask"));
+
+	UINT32	xxxx;
+	for (int i = 0; i < _offscreenSettings[tindex]->GetMaskCount(); i++)
+	{
+		int targetIndex = _offscreenSettings[tindex]->GetMask(i);
+		if (targetIndex == -1)
+		{
+			continue;
+		}
+		if (!GetModel()->GetDrawableDynamicFlagVertexPositionsDidChange(targetIndex))
+		{
+			continue;
+		}
+		LPDIRECT3DTEXTURE9 tex = _nowTexture[_drawable[targetIndex]->GetTextureIndex()];
+		V(g_effect->SetTexture("TexMain", tex));
+
+		V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
+
+		V(g_effect->Begin(&xxxx, 0));
+		V(g_effect->BeginPass(0));
+		_drawable[targetIndex]->DrawMask(g_dev);
+		V(g_effect->EndPass());
+		V(g_effect->End());
+	}
+
+	V(g_dev->EndScene());
+
+	V(g_dev->SetRenderTarget(0, preRenderSurface));
+
+	preRenderSurface->Release();
+}
+
+ void CubismRendererDx9::MakeMaskForDrawable(int tindex)
  {
 	 V(g_dev->EndScene());
 
+	 // Clear mask RT
 	 LPDIRECT3DSURFACE9	preRenderSurface;
 	 V(g_dev->GetRenderTarget(0, &preRenderSurface));
 	 V(g_effect->SetTexture("Mask", NULL));
@@ -1206,6 +1263,13 @@ void OffscreenShaderSetting::Initialize(CubismModel* model, int offscreenindex)
 	csmInt32 offscreenTargetIndex = -1;
 	if (currentPartsIndex != -1) {
 		offscreenTargetIndex = model->GetPartOffscreenIndices()[currentPartsIndex];
+	}
+
+	masks.Resize(model->GetOffscreenMaskCounts()[offscreenindex]);
+	isInvertMask = model->GetOffscreenInvertedMask(offscreenindex);
+	for (csmUint32 i = 0; i < masks.GetSize(); ++i)
+	{
+		masks[i] = model->GetOffscreenMasks()[offscreenindex][i];
 	}
 
 	_offscreenIndex = offscreenindex;

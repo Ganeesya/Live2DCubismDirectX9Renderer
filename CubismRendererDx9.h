@@ -229,7 +229,8 @@ protected:
 
 	void UpdateVertexs();
 
-	void MakeMask(int tindex);
+	void MakeMaskForDrawable(int tindex);
+	void MakeMaskForOffscreen(int tindex);
 
 	// 分離: Drawable と Offscreen 描画
 	void DrawDrawable(DrawableShaderSetting* drawableSetting);
