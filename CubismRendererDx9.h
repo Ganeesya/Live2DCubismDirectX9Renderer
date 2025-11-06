@@ -160,8 +160,6 @@ public:
 
 	// DrawableShaderSetting 互換 API
 	void SetDrawSetting(LPDIRECT3DDEVICE9 dev);
-	void DrawMask(LPDIRECT3DDEVICE9 dev);
-	void DrawMaskingMesh(LPDIRECT3DDEVICE9 dev);
 	int GetMaskCount();
 	int GetTextureIndex();
 	int GetMask(int i);

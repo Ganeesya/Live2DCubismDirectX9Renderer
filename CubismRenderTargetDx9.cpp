@@ -21,6 +21,7 @@ CubismOffscreenFrame_Dx9::~CubismOffscreenFrame_Dx9()
 
 void CubismOffscreenFrame_Dx9::ReleaseInternal()
 {
+    if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
     if (_surface) { _surface->Release(); _surface = nullptr; }
     if (_texture) { _texture->Release(); _texture = nullptr; }
     _width = _height = 0;
@@ -72,6 +73,9 @@ void CubismOffscreenFrame_Dx9::BeginDraw(LPDIRECT3DDEVICE9 device, bool clear, D
 {
     if (!device || !_surface || _drawing) return;
 
+    // 古い参照を解放（前回の Begin/End が不均衡でもリークを防ぐ）
+    if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
+
     // Store current render target & viewport
     device->GetRenderTarget(0, &_prevSurface);
     device->GetViewport(&_prevViewport);
@@ -95,7 +99,8 @@ void CubismOffscreenFrame_Dx9::EndDraw(LPDIRECT3DDEVICE9 device)
 
     // Restore previous RT
     device->SetRenderTarget(0, _prevSurface);
-    //if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
+
+    if (_prevSurface) { _prevSurface->Release(); _prevSurface = nullptr; }
 
     // Restore viewport
     device->SetViewport(&_prevViewport);

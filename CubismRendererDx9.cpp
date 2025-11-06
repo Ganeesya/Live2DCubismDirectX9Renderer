@@ -180,18 +180,9 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 
 	// テクスチャ
 	V(effect->SetTexture("TexMain", srcTex));
-	V(dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR));
-	V(dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR));
-	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP));
-	V(dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP));
-
-	// テクスチャステージで頂点カラーと乗算（アルファも）
-	V(dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE));
-	V(dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE));
-	V(dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE));
-	V(dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE));
-	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE));
-	V(dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE));
+	
+	D3DXVECTOR2 screenSize = D3DXVECTOR2(-1.0f / dstDesc.Width, -1.0f / dstDesc.Height);
+	V(effect->SetValue("OutputBufferTexelSize", &screenSize, sizeof(D3DXVECTOR2) ));
 
 	// ブレンドタイプを渡す
 	V(effect->SetInt("colorBlendType", setting->GetColorBlendType()));
@@ -217,7 +208,7 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	TLVertex quad[4];
 	const float w = static_cast<float>(dstDesc.Width);
 	const float h = static_cast<float>(dstDesc.Height);
-	const float ox = -1.0f, oy = -0.5f;
+	const float ox = -0.5f, oy = -0.5f;
 	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
 	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
 	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
@@ -232,8 +223,6 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
 	V(effect->EndPass()); V(effect->End());
 
-
-	LPDIRECT3DSURFACE9 target = NULL; V(dev->GetRenderTarget(0, &target));
 
 	// 後処理
 	V(dev->SetTexture(0, NULL));
@@ -298,6 +287,7 @@ CubismRendererDx9::~CubismRendererDx9()
 		if (_offscreenBuffers[i]) { _offscreenBuffers[i]->Destroy(); delete _offscreenBuffers[i]; }
 	}
 	_offscreenBuffers.Clear();
+
 	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
 	_offscreenSettings.Clear();
 
@@ -882,7 +872,6 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
-	LPDIRECT3DSURFACE9 target = NULL; V(g_dev->GetRenderTarget(0, &target));
 	drawableSetting->DrawMesh(g_dev);
 	V(g_effect->EndPass()); V(g_effect->End());
 }
@@ -1322,44 +1311,6 @@ void OffscreenShaderSetting::SetDrawSetting(LPDIRECT3DDEVICE9 dev)
 	}
 }
 
-void OffscreenShaderSetting::DrawMask(LPDIRECT3DDEVICE9 dev)
-{
-	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
-	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
-	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA));
-	V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-	V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-	V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
-	V(dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3));
-}
-
-void OffscreenShaderSetting::DrawMaskingMesh(LPDIRECT3DDEVICE9 dev)
-{
-	if (nonCulling) { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE)); }
-	else { V(dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW)); }
-	V(dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
-	V(dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
-	switch (maskingType)
-	{
-	case DrawingMaskingMode::Skip: return;
-	case DrawingMaskingMode::EraseMask:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
-		break;
-	case DrawingMaskingMode::DrawMask:
-	default:
-		V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
-		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
-		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA));
-		break;
-	}
-	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, vertexStart, 0, vertexCount, indiceStart, indiceCount / 3);
-}
 
 int OffscreenShaderSetting::GetMaskCount() { return masks.GetSize(); }
 int OffscreenShaderSetting::GetMask(int i) { return masks[i]; }
