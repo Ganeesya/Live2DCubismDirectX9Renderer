@@ -121,7 +121,6 @@ private:
 	int indiceCount; int indiceStart; 
 	int drawableIndex; int textureIndex; 
 	csmVector<int> masks; bool isInvertMask; 
-	Rendering::CubismRenderer::CubismBlendMode drawtype; 
 	DrawingMaskingMode maskingType; bool nonCulling; 
 	D3DXCOLOR diffuse; 
 	csmVector<CubismIdHandle> userdataElements; 

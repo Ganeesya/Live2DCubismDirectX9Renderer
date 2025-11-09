@@ -28,8 +28,10 @@ static bool getUseCopyBuffer(csmInt32 colorBlendType, csmInt32 alphaBlendType) {
 	case ::csmColorBlendType_AddCompatible: // Additive(compatible)
 	case ::csmColorBlendType_MultiplyCompatible: // Multiplicative(compatible)
 		return false;
-	default:
+	case ::csmColorBlendType_Normal:
 		break;
+	default:
+		return true;
 	}
 	if( alphaBlendType == L2DBlend::AlphaBlendType::AlphaBlend_Over ) {
 		return false;
@@ -83,7 +85,7 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 		return;
 	}
 
-	CubismLogWarning("offsetBake index:%d target:%d", srcIndex, dstIndex);
+	CubismLogVerbose("offsetBake index:%d target:%d", srcIndex, dstIndex);
 
 	// パーツ（オーナーDrawable）の不透明度を取得
 	float ownerOpacity = model->GetOffscreenOpacity(srcIndex);
@@ -199,7 +201,6 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 		V(effect->SetTexture("OutputBuffer", NULL));
 		V(effect->SetBool("useOutBuffer", false));
 	}
-	V(effect->SetBool("isDebug", false));
 	V(effect->SetFloat("drawableOpacity", ownerOpacity));
 
 	// フルスクリーンクワッド（頂点カラーに不透明度適用）
@@ -248,7 +249,7 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 
 	V(dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	CubismLogWarning("currentOffscrennChange %d -> %d %s color:%2d alpha:%2d",
+	CubismLogVerbose("currentOffscrennChange %d -> %d %s color:%2d alpha:%2d",
 		s_ActiveOffscreenIndex,
 		dstIndex, setting->GetUsedSelfBuffer() ? "tr" : "fa",
 		setting->GetColorBlendType(),
@@ -755,7 +756,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         if (e.IsOffscreen)
         {
             DrawOffscreen(_offscreenSettings[e.Index]);
-            CubismLogWarning("%d offset index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d", 
+			CubismLogVerbose("%d offset index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d",
 				i, e.Index,
 				_offscreenSettings[e.Index]->GetTransferOffscreenIndex(),
 				GetModel()->GetOffscreenOwnerId(e.Index)->GetString().GetRawString(),
@@ -766,7 +767,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         else
         {
             DrawDrawable(_drawable[e.Index]);
-            CubismLogWarning("%d drawable index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d", 
+            CubismLogVerbose("%d drawable index:%d target:%d id:%s useBuff:%s color:%2d alpha:%2d", 
 				i, e.Index,
 				_drawable[e.Index]->GetOffscreenIndex(),
 				GetModel()->GetDrawableId(e.Index)->GetString().GetRawString(),
@@ -868,7 +869,6 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 		V(g_effect->SetTexture("OutputBuffer", NULL));
 		V(g_effect->SetBool("useOutBuffer", false));
 	}
-	V(g_effect->SetBool("isDebug", true));
 	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
 	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
@@ -1002,7 +1002,6 @@ void DrawableShaderSetting::Initialize(CubismModel* model, int drawindex, int & 
 {
 	drawableIndex = drawindex;
 	textureIndex = model->GetDrawableTextureIndices(drawableIndex);
-	drawtype = model->GetDrawableBlendMode(drawableIndex);
 	nonCulling = !model->GetDrawableCulling(drawableIndex);
 
 	vertexCount = model->GetDrawableVertexCount(drawableIndex);
@@ -1069,21 +1068,20 @@ void DrawableShaderSetting::DrawMesh(LPDIRECT3DDEVICE9 dev)
 		V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO));
 		V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ZERO));
 	}else{
-		switch (drawtype)
+		switch (colorBlendType)
 		{
-		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Additive:
+		case ::csmColorBlendType_AddCompatible:
 			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
 			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE));
 			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
 			break;
-		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Multiplicative:
+		case ::csmColorBlendType_MultiplyCompatible:
 			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR));
 			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO));
 			V(dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA));
 			V(dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE));
 			break;
-		case Rendering::CubismRenderer::CubismBlendMode::CubismBlendMode_Normal:
 		default:
 			V(dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
 			V(dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
