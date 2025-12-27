@@ -1,5 +1,7 @@
 ﻿#include "CubismRendererDx9.h"
 #include <algorithm>
+#include <vector>
+#include "../OWFramework/src/Model/CubismModelUserData.hpp"
 
 // CubismRenderer 静的ファクトリ実装（リンクエラー対策）
 Live2DC3::Cubism::Framework::Rendering::CubismRenderer* Live2DC3::Cubism::Framework::Rendering::CubismRenderer::Create(csmUint32 width, csmUint32 height)
@@ -102,7 +104,7 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(dev->GetTransform(D3DTS_VIEW, &prevView));
 	V(dev->GetTransform(D3DTS_PROJECTION, &prevProj));
 	D3DXMATRIXA16 prevFxMvp; ZeroMemory(&prevFxMvp, sizeof(prevFxMvp));
-	effect->GetMatrix("g_mWorldViewProjection", &prevFxMvp);
+	V(g_effect->GetMatrix("g_mWorldViewProjection", &prevFxMvp));
 
 	// 転写先サーフェス決定
 	LPDIRECT3DSURFACE9 dstSurf = prevRT;
@@ -204,25 +206,25 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(effect->SetFloat("drawableOpacity", ownerOpacity));
 
 	// フルスクリーンクワッド（頂点カラーに不透明度適用）
-	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
-	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-	TLVertex quad[4];
-	const float w = static_cast<float>(dstDesc.Width);
-	const float h = static_cast<float>(dstDesc.Height);
-	const float ox = -0.5f, oy = -0.5f;
-	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
-	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
-	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
-	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
-	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
-	V(dev->SetFVF(TL_FVF));
-
-	V(effect->SetBool("isPremultipliedAlpha", false));
-	setting->SetDrawSetting(dev);
-
-	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
-	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
-	V(effect->EndPass()); V(effect->End());
+// 	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
+// 	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+// 	TLVertex quad[4];
+// 	const float w = static_cast<float>(dstDesc.Width);
+// 	const float h = static_cast<float>(dstDesc.Height);
+// 	const float ox = -0.5f, oy = -0.5f;
+// 	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
+// 	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
+// 	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
+// 	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
+// 	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
+// 	V(dev->SetFVF(TL_FVF));
+//
+// 	V(effect->SetBool("isPremultipliedAlpha", false));
+// 	setting->SetDrawSetting(dev);
+//
+// 	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
+// 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+// 	V(effect->EndPass()); V(effect->End);
 
 
 	// 後処理
@@ -291,6 +293,8 @@ CubismRendererDx9::~CubismRendererDx9()
 
 	for (csmUint32 i = 0; i < _offscreenSettings.GetSize(); ++i) { delete _offscreenSettings[i]; }
 	_offscreenSettings.Clear();
+
+	if (_modelOffscreen) { _modelOffscreen->Destroy(); delete _modelOffscreen; _modelOffscreen = nullptr; }
 
 	if (_vertex) { _vertex->Release(); _vertex = NULL; }
 	if (_indice) { _indice->Release(); _indice = NULL; }
@@ -400,6 +404,11 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 			_offscreenSettings[i]->Initialize(model, i); // ownerPartsIndex を転写元として暫定利用
 		}
 	}
+
+	// モデル全体描画用の単一バッファを用意
+	if (_modelOffscreen) { _modelOffscreen->Destroy(); delete _modelOffscreen; _modelOffscreen = nullptr; }
+	_modelOffscreen = new CubismOffscreenFrame_Dx9();
+	_modelOffscreen->Create(g_dev, _modelRenderTargetWidth, _modelRenderTargetHeight, D3DFMT_A8R8G8B8);
 }
 
 /**
@@ -554,7 +563,7 @@ void CubismRendererDx9::DrawMasking(
 		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
 		V(g_effect->SetTexture("TexMain", tex));
 
-		// ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）
+		// ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）"
 		V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
 		V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
 
@@ -569,10 +578,46 @@ void CubismRendererDx9::DrawMasking(
 	RestoreProfile();
 }
 
+// char*(UTF-8/ANSI) を wchar_t* に変換するユーティリティ
+static std::wstring ToWideFromMulti(const char* s)
+{
+	if (!s) return std::wstring();
+	// まず UTF-8 で試す
+	int lenUtf8 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, nullptr, 0);
+	if (lenUtf8 > 0)
+	{
+		std::vector<wchar_t> buf(lenUtf8);
+		MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, buf.data(), (int)buf.size());
+		return std::wstring(buf.data());
+	}
+	// 失敗したら ANSI(現在のコードページ)でフォールバック
+	int lenAcp = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+	std::vector<wchar_t> buf(lenAcp);
+	MultiByteToWideChar(CP_ACP, 0, s, -1, buf.data(), (int)buf.size());
+	return std::wstring(buf.data());
+}
+
 bool CubismRendererDx9::AddTexture(const char * filepath)
 {
 	LPDIRECT3DTEXTURE9 newtex;
-	if (FAILED(D3DXCreateTextureFromFileExA(g_dev
+#if _WIN64
+	std::wstring wpath = ToWideFromMulti(filepath);
+	bool result = FAILED(D3DXCreateTextureFromFileExW(g_dev
+		, wpath.c_str()
+		, 0
+		, 0
+		, 0
+		, 0
+		, D3DFMT_A8R8G8B8
+		, D3DPOOL_MANAGED
+		, D3DX_FILTER_LINEAR
+		, D3DX_FILTER_BOX
+		, 0
+		, NULL
+		, NULL
+		, &newtex));
+#else
+	bool result = FAILED(D3DXCreateTextureFromFileExA(g_dev
 		, filepath
 		, 0
 		, 0
@@ -585,7 +630,9 @@ bool CubismRendererDx9::AddTexture(const char * filepath)
 		, 0
 		, NULL
 		, NULL
-		, &newtex)))
+		, &newtex));
+#endif
+	if (result)
 	{
 		return false;
 	}
@@ -700,6 +747,13 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
     csmInt32 drawableCount  = GetModel()->GetDrawableCount();
     csmInt32 offscreenCount = GetModel()->GetOffscreenCount();
 
+	// モデル全体の描画は専用オフスクリーンに行う
+	LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
+	// Begin scene 終了してからレンダターゲット切替
+	V(g_dev->EndScene());
+	_modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
+	V(g_dev->BeginScene());
+
     // 描画情報を Drawable と Offscreen で分離して保持
     struct RenderEntry
     {
@@ -784,6 +838,57 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
         if (off && off->IsValid()) { off->EndDraw(g_dev); }
 		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, GetModel(), s_ActiveOffscreenIndex);
     }
+
+	// モデル全体バッファを閉じる
+	_modelOffscreen->EndDraw(g_dev);
+
+	// 元のRTに戻して合成（モデルカラーのAlphaで半透明）
+	V(g_dev->SetRenderTarget(0, prevRT));
+	if (prevRT) { prevRT->Release(); }
+
+	// comoposite pass
+	V(g_dev->BeginScene());
+
+	// 現在のバッファ内容をコピー（必要なら）
+	CopyCurrentRTToTexture(g_dev);
+
+	LPDIRECT3DTEXTURE9 texModel = _modelOffscreen->GetTexture();
+	V(g_effect->SetTexture("TexMain", texModel));
+	V(g_effect->SetTexture("OutputBuffer", s_rtCopyTex));
+	V(g_effect->SetBool("useOutBuffer", true));
+
+	// モデル全体のα（ModelColor.A）を適用
+
+	V(g_effect->SetFloat("drawableOpacity", GetModel()->GetModelOpacity()));
+
+	// 転写用テクニック（ノーマスク）
+	V(g_effect->SetTechnique("TransferOffscreenNomask"));
+
+	// フルスクリーンクワッドで合成
+	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
+	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+	D3DSURFACE_DESC backDesc; {
+		LPDIRECT3DSURFACE9 back; V(g_dev->GetRenderTarget(0, &back));
+		back->GetDesc(&backDesc);
+		back->Release();
+	}
+	TLVertex quad[4];
+	const float w = static_cast<float>(backDesc.Width);
+	const float h = static_cast<float>(backDesc.Height);
+	const float ox = -0.5f, oy = -0.5f;
+	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
+	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
+	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
+	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
+	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
+	V(g_dev->SetFVF(TL_FVF));
+
+	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
+	V(g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+	V(g_effect->EndPass()); V(g_effect->End());
+
+	V(g_dev->SetTexture(0, NULL));
+	V(g_dev->EndScene());
 }
 
 void CubismRendererDx9::DrawOffscreen(OffscreenShaderSetting* offscreenSetting)

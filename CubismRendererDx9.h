@@ -6,8 +6,9 @@
 #include "../OWFramework\src\Model\CubismModel.hpp"
 #include "../OWFramework\src\Rendering\CubismRenderer.hpp"
 #include "../OWFramework\src\Id\CubismIdManager.hpp"
-#include "../OWFramework\src\Model\CubismModelUserData.hpp"
 #include "CubismRenderTargetDx9.h" // 追加: Offscreen 用
+// Forward declare to avoid include order issues
+namespace Live2DC3 { namespace Cubism { namespace Framework { class CubismModelUserData; } } }
 
 
 using namespace Live2DC3::Cubism::Framework;
@@ -262,6 +263,9 @@ protected:
 	// 追加: モデルの Offscreen 数に対応するオフスクリーンフレーム
 	csmVector<CubismOffscreenFrame_Dx9*> _offscreenBuffers;
 	csmVector<OffscreenShaderSetting*> _offscreenSettings; // Offscreen設定
+
+	// 追加: モデル全体描画用の単一バッファ
+	CubismOffscreenFrame_Dx9* _modelOffscreen = nullptr;
 
 	LPDIRECT3DVERTEXBUFFER9 _vertex;
 	LPDIRECT3DINDEXBUFFER9  _indice;
