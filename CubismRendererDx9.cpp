@@ -315,7 +315,7 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 	_mtrx = mat;
 
 	int vertexTotalSize = 0;
-	int indexTotalSize = 0;
+	 int indexTotalSize = 0;
 	for (csmInt32 i = 0; i < model->GetDrawableCount(); ++i)
 	{
 		vertexTotalSize += model->GetDrawableVertexCount(i);
@@ -571,8 +571,7 @@ void CubismRendererDx9::DrawMasking(
 		V(g_effect->Begin(&xxxx, 0));
 		V(g_effect->BeginPass(0));
 		sort[i]->DrawMaskingMesh(g_dev);
-		V(g_effect->EndPass());
-		V(g_effect->End());
+		V(g_effect->EndPass()); V(g_effect->End());
 	}
 
 	RestoreProfile();
@@ -748,11 +747,36 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
     csmInt32 offscreenCount = GetModel()->GetOffscreenCount();
 
 	// モデル全体の描画は専用オフスクリーンに行う
-	LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
-	// Begin scene 終了してからレンダターゲット切替
-	V(g_dev->EndScene());
-	_modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
-	V(g_dev->BeginScene());
+    LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
+    // 描画開始前に、現在の描画先（既存のレンダーターゲット）の内容を取得しておく
+    // これにより、最初の描画時に "描画先のバッファの内容" をシェーダへ渡せる
+    CopyCurrentRTToTexture(g_dev);
+    // Begin scene 終了してからレンダターゲット切替
+    V(g_dev->EndScene());
+    _modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
+    V(g_dev->BeginScene());
+
+    // 重要: モデルのオフスクリーンを「元のRT内容で初期化」する
+    // s_rtCopyTex にコピー済みの前フレーム（または描画前）RT内容を、_modelOffscreen のサーフェスへ転送する
+    {
+        LPDIRECT3DSURFACE9 dstSurf = _modelOffscreen->GetSurface();
+        LPDIRECT3DSURFACE9 srcSurf = nullptr;
+        if (s_rtCopyTex && dstSurf && SUCCEEDED(s_rtCopyTex->GetSurfaceLevel(0, &srcSurf)))
+        {
+            D3DSURFACE_DESC dstDesc; dstSurf->GetDesc(&dstDesc);
+            D3DSURFACE_DESC srcDesc; srcSurf->GetDesc(&srcDesc);
+            if (srcDesc.Format == dstDesc.Format)
+            {
+                V(g_dev->StretchRect(srcSurf, nullptr, dstSurf, nullptr, D3DTEXF_NONE));
+            }
+            else
+            {
+                // フォーマットが異なる場合でも、簡易的に StretchRect 試行（DX9では一部互換あり）
+                V(g_dev->StretchRect(srcSurf, nullptr, dstSurf, nullptr, D3DTEXF_NONE));
+            }
+        }
+        if (srcSurf) srcSurf->Release();
+    }
 
     // 描画情報を Drawable と Offscreen で分離して保持
     struct RenderEntry
@@ -846,10 +870,12 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	V(g_dev->SetRenderTarget(0, prevRT));
 	if (prevRT) { prevRT->Release(); }
 
-	// comoposite pass
-	V(g_dev->BeginScene());
+    // composite pass
+    // 現在のシーン状態に依存せず、必ず BeginScene 前に EndScene を呼んで整合性を保つ
+    V(g_dev->EndScene());
+    V(g_dev->BeginScene());
 
-	// 現在のバッファ内容をコピー（必要なら）
+    // 現在のバッファ内容をコピー（必要なら）
 	CopyCurrentRTToTexture(g_dev);
 
 	LPDIRECT3DTEXTURE9 texModel = _modelOffscreen->GetTexture();
@@ -883,7 +909,7 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(g_dev->SetFVF(TL_FVF));
 
-	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
+    UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
 	V(g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
 	V(g_effect->EndPass()); V(g_effect->End());
 
