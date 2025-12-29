@@ -439,142 +439,147 @@ void CubismRendererDx9::DrawMasking(
 							int mode,
 							csmVector<CubismIdHandle>& ids) 
 {
-	if (!selected) return;
+    if (!selected) return;
 
-	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
-	{
-		CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
-		bool isFit = false;
+    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+    {
+        CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
+        bool isFit = false;
 
-		if ( (mode & MASKING_MODE_ID_FIT_FLAG) != 0 ) {
-			isFit |= HitId(ids, drawableId);
-		}
-		if ( (mode & MASKING_MODE_USERDATA_FIT_FLAG) != 0 ) {
-			isFit |= _drawable[i]->HaveElements(ids);
-		}
+        if ( (mode & MASKING_MODE_ID_FIT_FLAG) != 0 ) {
+            isFit |= HitId(ids, drawableId);
+        }
+        if ( (mode & MASKING_MODE_USERDATA_FIT_FLAG) != 0 ) {
+            isFit |= _drawable[i]->HaveElements(ids);
+        }
 
-		if ( (mode & MASKING_MODE_FITTING_MEAN_INVERT) != 0 ) {
-			isFit = !isFit;
-		}
+        if ( (mode & MASKING_MODE_FITTING_MEAN_INVERT) != 0 ) {
+            isFit = !isFit;
+        }
 
-		DrawingMaskingMode setMode = DrawingMaskingMode::DrawMask;
+        DrawingMaskingMode setMode = DrawingMaskingMode::DrawMask;
 
-		if (!isFit) {
-			if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
-				setMode = DrawingMaskingMode::Skip;
-			}
-			else {
-				setMode = DrawingMaskingMode::EraseMask;
-			}
-		}
-		_drawable[i]->SetDrawingMaskingType(setMode);
-	}
+        if (!isFit) {
+            if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
+                setMode = DrawingMaskingMode::Skip;
+            }
+            else {
+                setMode = DrawingMaskingMode::EraseMask;
+            }
+        }
+        _drawable[i]->SetDrawingMaskingType(setMode);
+    }
 
-	SaveProfile();
-	
-	D3DXMATRIXA16 view;
-	V(g_dev->GetTransform(D3DTS_VIEW, &view));
+    SaveProfile();
+    
+    D3DXMATRIXA16 view;
+    V(g_dev->GetTransform(D3DTS_VIEW, &view));
 
-	D3DXMATRIXA16 projection;
-	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
+    D3DXMATRIXA16 projection;
+    V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
 
-	D3DXMATRIXA16 mmvp;
-	D3DXMatrixIdentity(&mmvp);
+    D3DXMATRIXA16 mmvp;
+    D3DXMatrixIdentity(&mmvp);
 
-	D3DXMATRIXA16 modelMat(_mtrx->getArray());
+    D3DXMATRIXA16 modelMat(_mtrx->getArray());
 
-	D3DXMATRIXA16 normalizeMat;
-	D3DXMatrixIdentity(&normalizeMat);
-	normalizeMat._11 *= -1;
-	normalizeMat._41 += 0.5;
-	normalizeMat._42 -= 0.5;
+    D3DXMATRIXA16 normalizeMat;
+    D3DXMatrixIdentity(&normalizeMat);
+    normalizeMat._11 *= -1;
+    normalizeMat._41 += 0.5;
+    normalizeMat._42 -= 0.5;
 
-	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &view);
-	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &view);
+    D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
 
-	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
-	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
+    V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+    V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
-	UpdateVertexs();
-	
-	for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
-	{
-		_nowTexture[i] = _textures[i]->getNowTex();
-	}
+    UpdateVertexs();
+    
+    for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
+    {
+        _nowTexture[i] = _textures[i]->getNowTex();
+    }
 
-	V(g_dev->SetIndices(_indice));
-	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+    V(g_dev->SetIndices(_indice));
+    V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
 
-	V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
+    V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-	csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
+    csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
 
-	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
-	{
-		sort[GetModel()->GetRenderOrders()[i]] = _drawable[i];
-	}
+    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+    {
+        sort[GetModel()->GetRenderOrders()[i]] = _drawable[i];
+    }
 
-	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+    V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
 
-	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
-	{
-		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
-		{
-			sort[i]->GetDiffuse();
-			continue;
-		}
-		float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
-		if (sort[i]->GetMaskCount() > 0)
-		{
-			MakeMaskForDrawable(sort[i]->GetDrawableIndex());
+    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
+    {
+        if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
+        {
+            sort[i]->GetDiffuse();
+            continue;
+        }
+        float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
+        if (sort[i]->GetMaskCount() > 0)
+        {
+            MakeMaskForDrawable(sort[i]->GetDrawableIndex());
 
-			V(g_effect->SetTexture("Mask", g_maskTexture));
+            V(g_effect->SetTexture("Mask", g_maskTexture));
 
-			V(g_effect->SetTechnique("RenderMaskingMasked"));
-			V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
-		}
-		else
-		{
-			V(g_effect->SetTechnique("RenderMaskingNoMask"));
-		}
+            V(g_effect->SetTechnique("RenderMaskingMasked"));
+            V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
+        }
+        else
+        {
+            V(g_effect->SetTechnique("RenderMaskingNoMask"));
+        }
 
-		V(g_effect->SetFloat("drawableOpacity", opa));
+        // 対策案1: DoDrawModelの残存状態をクリア（半透明の模様対策）
+        V(g_effect->SetTexture("OutputBuffer", NULL));
+        V(g_effect->SetBool("useOutBuffer", false));
 
-		CubismTextureColor modelColor = GetModelColor();
-		D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
-		D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
-		diffuse.r *= modelDiffuse.r;
-		diffuse.g *= modelDiffuse.g;
-		diffuse.b *= modelDiffuse.b;
-		diffuse.a *= modelDiffuse.a;
-		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
-		V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
+        V(g_effect->SetFloat("drawableOpacity", opa));
 
-		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
-		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
-		V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
-		csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
-		D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
-		V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
+        CubismTextureColor modelColor = GetModelColor();
+        D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
+        D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
+        diffuse.r *= modelDiffuse.r;
+        diffuse.g *= modelDiffuse.g;
+        diffuse.b *= modelDiffuse.b;
+        diffuse.a *= modelDiffuse.a;
+        V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+        V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
 
-		int texnum = sort[i]->GetTextureIndex();
-		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
-		V(g_effect->SetTexture("TexMain", tex));
+        csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
+        D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
+        V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
+        csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
+        D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
+        V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
 
-		// ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）"
-		V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
-		V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
+        int texnum = sort[i]->GetTextureIndex();
+        LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
+        V(g_effect->SetTexture("TexMain", tex));
 
-		UINT32	xxxx;
-		V(g_effect->Begin(&xxxx, 0));
-		V(g_effect->BeginPass(0));
-		sort[i]->DrawMaskingMesh(g_dev);
-		V(g_effect->EndPass()); V(g_effect->End());
-	}
+        // ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）
+        V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
+        V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
 
-	RestoreProfile();
+        UINT32 xxxx;
+        V(g_effect->Begin(&xxxx, 0));
+        V(g_effect->BeginPass(0));
+        sort[i]->DrawMaskingMesh(g_dev);
+        V(g_effect->EndPass());
+        V(g_effect->End());
+    }
+
+    RestoreProfile();
 }
 
 // char*(UTF-8/ANSI) を wchar_t* に変換するユーティリティ
