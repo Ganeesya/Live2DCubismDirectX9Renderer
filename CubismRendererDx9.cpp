@@ -315,7 +315,7 @@ void CubismRendererDx9::Initialize(CubismModel * model, L2DModelMatrix * mat, Cu
 	_mtrx = mat;
 
 	int vertexTotalSize = 0;
-	 int indexTotalSize = 0;
+	int indexTotalSize = 0;
 	for (csmInt32 i = 0; i < model->GetDrawableCount(); ++i)
 	{
 		vertexTotalSize += model->GetDrawableVertexCount(i);
@@ -439,147 +439,143 @@ void CubismRendererDx9::DrawMasking(
 							int mode,
 							csmVector<CubismIdHandle>& ids) 
 {
-    if (!selected) return;
+	if (!selected) return;
 
-    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
-    {
-        CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
-        bool isFit = false;
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+	{
+		CubismIdHandle drawableId = GetModel()->GetDrawableId(i);
+		bool isFit = false;
 
-        if ( (mode & MASKING_MODE_ID_FIT_FLAG) != 0 ) {
-            isFit |= HitId(ids, drawableId);
-        }
-        if ( (mode & MASKING_MODE_USERDATA_FIT_FLAG) != 0 ) {
-            isFit |= _drawable[i]->HaveElements(ids);
-        }
+		if ( (mode & MASKING_MODE_ID_FIT_FLAG) != 0 ) {
+			isFit |= HitId(ids, drawableId);
+		}
+		if ( (mode & MASKING_MODE_USERDATA_FIT_FLAG) != 0 ) {
+			isFit |= _drawable[i]->HaveElements(ids);
+		}
 
-        if ( (mode & MASKING_MODE_FITTING_MEAN_INVERT) != 0 ) {
-            isFit = !isFit;
-        }
+		if ( (mode & MASKING_MODE_FITTING_MEAN_INVERT) != 0 ) {
+			isFit = !isFit;
+		}
 
-        DrawingMaskingMode setMode = DrawingMaskingMode::DrawMask;
+		DrawingMaskingMode setMode = DrawingMaskingMode::DrawMask;
 
-        if (!isFit) {
-            if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
-                setMode = DrawingMaskingMode::Skip;
-            }
-            else {
-                setMode = DrawingMaskingMode::EraseMask;
-            }
-        }
-        _drawable[i]->SetDrawingMaskingType(setMode);
-    }
+		if (!isFit) {
+			if ( (mode & MASKING_MODE_NONFIT_SKIP) != 0 ) {
+				setMode = DrawingMaskingMode::Skip;
+			}
+			else {
+				setMode = DrawingMaskingMode::EraseMask;
+			}
+		}
+		_drawable[i]->SetDrawingMaskingType(setMode);
+	}
 
-    SaveProfile();
-    
-    D3DXMATRIXA16 view;
-    V(g_dev->GetTransform(D3DTS_VIEW, &view));
+	SaveProfile();
+	
+	D3DXMATRIXA16 view;
+	V(g_dev->GetTransform(D3DTS_VIEW, &view));
 
-    D3DXMATRIXA16 projection;
-    V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
+	D3DXMATRIXA16 projection;
+	V(g_dev->GetTransform(D3DTS_PROJECTION, &projection));
 
-    D3DXMATRIXA16 mmvp;
-    D3DXMatrixIdentity(&mmvp);
+	D3DXMATRIXA16 mmvp;
+	D3DXMatrixIdentity(&mmvp);
 
-    D3DXMATRIXA16 modelMat(_mtrx->getArray());
+	D3DXMATRIXA16 modelMat(_mtrx->getArray());
 
-    D3DXMATRIXA16 normalizeMat;
-    D3DXMatrixIdentity(&normalizeMat);
-    normalizeMat._11 *= -1;
-    normalizeMat._41 += 0.5;
-    normalizeMat._42 -= 0.5;
+	D3DXMATRIXA16 normalizeMat;
+	D3DXMatrixIdentity(&normalizeMat);
+	normalizeMat._11 *= -1;
+	normalizeMat._41 += 0.5;
+	normalizeMat._42 -= 0.5;
 
-    D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
-    D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
-    D3DXMatrixMultiply(&mmvp, &mmvp, &view);
-    D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &normalizeMat);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &modelMat);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &view);
+	D3DXMatrixMultiply(&mmvp, &mmvp, &projection);
 
-    V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
-    V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
+	V(g_effect->SetMatrix("g_mWorldViewProjection", &mmvp));
+	V(g_effect->SetBool("isPremultipliedAlpha", IsPremultipliedAlpha()));
 
-    UpdateVertexs();
-    
-    for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
-    {
-        _nowTexture[i] = _textures[i]->getNowTex();
-    }
+	UpdateVertexs();
+	
+	for (csmUint32 i = 0; i < _textures.GetSize(); ++i)
+	{
+		_nowTexture[i] = _textures[i]->getNowTex();
+	}
 
-    V(g_dev->SetIndices(_indice));
-    V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
+	V(g_dev->SetIndices(_indice));
+	V(g_dev->SetStreamSource(0, _vertex, 0, sizeof(L2DAPPVertex)));
 
-    V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
+	V(g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1));
 
-    csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
+	csmVector<DrawableShaderSetting*> sort(GetModel()->GetDrawableCount());
 
-    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
-    {
-        sort[GetModel()->GetRenderOrders()[i]] = _drawable[i];
-    }
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); ++i)
+	{
+		sort[GetModel()->GetRenderOrders()[i]] = _drawable[i];
+	}
 
-    V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
 
-    for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
-    {
-        if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
-        {
-            sort[i]->GetDiffuse();
-            continue;
-        }
-        float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
-        if (sort[i]->GetMaskCount() > 0)
-        {
-            MakeMaskForDrawable(sort[i]->GetDrawableIndex());
+	for (csmInt32 i = 0; i < GetModel()->GetDrawableCount(); i++)
+	{
+		if (!GetModel()->GetDrawableDynamicFlagIsVisible(sort[i]->GetDrawableIndex()))
+		{
+			sort[i]->GetDiffuse();
+			continue;
+		}
+		float opa = GetModel()->GetDrawableOpacity(sort[i]->GetDrawableIndex());
+		if (sort[i]->GetMaskCount() > 0)
+		{
+			MakeMaskForDrawable(sort[i]->GetDrawableIndex());
 
-            V(g_effect->SetTexture("Mask", g_maskTexture));
+			V(g_effect->SetTexture("Mask", g_maskTexture));
 
-            V(g_effect->SetTechnique("RenderMaskingMasked"));
-            V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
-        }
-        else
-        {
-            V(g_effect->SetTechnique("RenderMaskingNoMask"));
-        }
+			V(g_effect->SetTechnique("RenderMaskingMasked"));
+			V(g_effect->SetBool("isInvertMask", sort[i]->GetIsInvertMask()));
+		}
+		else
+		{
+			V(g_effect->SetTechnique("RenderMaskingNoMask"));
+		}
 
-        // 対策案1: DoDrawModelの残存状態をクリア（半透明の模様対策）
-        V(g_effect->SetTexture("OutputBuffer", NULL));
-        V(g_effect->SetBool("useOutBuffer", false));
+		V(g_effect->SetFloat("drawableOpacity", opa));
 
-        V(g_effect->SetFloat("drawableOpacity", opa));
+		CubismTextureColor modelColor = GetModelColor();
+		D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
+		D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
+		diffuse.r *= modelDiffuse.r;
+		diffuse.g *= modelDiffuse.g;
+		diffuse.b *= modelDiffuse.b;
+		diffuse.a *= modelDiffuse.a;
+		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
+		V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
 
-        CubismTextureColor modelColor = GetModelColor();
-        D3DXCOLOR modelDiffuse = D3DXCOLOR(modelColor.R, modelColor.G, modelColor.B, modelColor.A);
-        D3DXCOLOR diffuse = D3DXCOLOR(1, 1, 1, 1);
-        diffuse.r *= modelDiffuse.r;
-        diffuse.g *= modelDiffuse.g;
-        diffuse.b *= modelDiffuse.b;
-        diffuse.a *= modelDiffuse.a;
-        V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
-        V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
+		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
+		V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
+		csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
+		D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
+		V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
 
-        csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
-        D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
-        V(g_effect->SetValue("multiplyColor", &multiColor, sizeof(D3DXCOLOR)));
-        csmVector4 screenColorCsm = GetModel()->GetDrawableScreenColor(sort[i]->GetDrawableIndex());
-        D3DXCOLOR screenColor = D3DXCOLOR(screenColorCsm.X, screenColorCsm.Y, screenColorCsm.Z, screenColorCsm.W);
-        V(g_effect->SetValue("screenColor", &screenColor, sizeof(D3DXCOLOR)));
+		int texnum = sort[i]->GetTextureIndex();
+		LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
+		V(g_effect->SetTexture("TexMain", tex));
 
-        int texnum = sort[i]->GetTextureIndex();
-        LPDIRECT3DTEXTURE9 tex = _nowTexture[texnum];
-        V(g_effect->SetTexture("TexMain", tex));
+		// ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）"
+		V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
+		V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
 
-        // ブレンドタイプはここでも渡す（マスキング描画の一貫性のため）
-        V(g_effect->SetInt("colorBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetColorBlendType()));
-        V(g_effect->SetInt("alphaBlendType", _drawable[sort[i]->GetDrawableIndex()]->GetAlphaBlendType()));
+		UINT32	xxxx;
+		V(g_effect->Begin(&xxxx, 0));
+		V(g_effect->BeginPass(0));
+		sort[i]->DrawMaskingMesh(g_dev);
+		V(g_effect->EndPass());
+		V(g_effect->End());
+	}
 
-        UINT32 xxxx;
-        V(g_effect->Begin(&xxxx, 0));
-        V(g_effect->BeginPass(0));
-        sort[i]->DrawMaskingMesh(g_dev);
-        V(g_effect->EndPass());
-        V(g_effect->End());
-    }
-
-    RestoreProfile();
+	RestoreProfile();
 }
 
 // char*(UTF-8/ANSI) を wchar_t* に変換するユーティリティ
@@ -752,36 +748,11 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
     csmInt32 offscreenCount = GetModel()->GetOffscreenCount();
 
 	// モデル全体の描画は専用オフスクリーンに行う
-    LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
-    // 描画開始前に、現在の描画先（既存のレンダーターゲット）の内容を取得しておく
-    // これにより、最初の描画時に "描画先のバッファの内容" をシェーダへ渡せる
-    CopyCurrentRTToTexture(g_dev);
-    // Begin scene 終了してからレンダターゲット切替
-    V(g_dev->EndScene());
-    _modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
-    V(g_dev->BeginScene());
-
-    // 重要: モデルのオフスクリーンを「元のRT内容で初期化」する
-    // s_rtCopyTex にコピー済みの前フレーム（または描画前）RT内容を、_modelOffscreen のサーフェスへ転送する
-    {
-        LPDIRECT3DSURFACE9 dstSurf = _modelOffscreen->GetSurface();
-        LPDIRECT3DSURFACE9 srcSurf = nullptr;
-        if (s_rtCopyTex && dstSurf && SUCCEEDED(s_rtCopyTex->GetSurfaceLevel(0, &srcSurf)))
-        {
-            D3DSURFACE_DESC dstDesc; dstSurf->GetDesc(&dstDesc);
-            D3DSURFACE_DESC srcDesc; srcSurf->GetDesc(&srcDesc);
-            if (srcDesc.Format == dstDesc.Format)
-            {
-                V(g_dev->StretchRect(srcSurf, nullptr, dstSurf, nullptr, D3DTEXF_NONE));
-            }
-            else
-            {
-                // フォーマットが異なる場合でも、簡易的に StretchRect 試行（DX9では一部互換あり）
-                V(g_dev->StretchRect(srcSurf, nullptr, dstSurf, nullptr, D3DTEXF_NONE));
-            }
-        }
-        if (srcSurf) srcSurf->Release();
-    }
+	LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
+	// Begin scene 終了してからレンダターゲット切替
+	V(g_dev->EndScene());
+	_modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
+	V(g_dev->BeginScene());
 
     // 描画情報を Drawable と Offscreen で分離して保持
     struct RenderEntry
@@ -875,12 +846,10 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	V(g_dev->SetRenderTarget(0, prevRT));
 	if (prevRT) { prevRT->Release(); }
 
-    // composite pass
-    // 現在のシーン状態に依存せず、必ず BeginScene 前に EndScene を呼んで整合性を保つ
-    V(g_dev->EndScene());
-    V(g_dev->BeginScene());
+	// comoposite pass
+	V(g_dev->BeginScene());
 
-    // 現在のバッファ内容をコピー（必要なら）
+	// 現在のバッファ内容をコピー（必要なら）
 	CopyCurrentRTToTexture(g_dev);
 
 	LPDIRECT3DTEXTURE9 texModel = _modelOffscreen->GetTexture();
@@ -895,6 +864,17 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	// 転写用テクニック（ノーマスク）
 	V(g_effect->SetTechnique("TransferOffscreenNomask"));
 
+	// 前回の描画エントリから残存するシェーダーパラメータをリセット
+	V(g_effect->SetInt("colorBlendType", 0));   // Normal
+	V(g_effect->SetInt("alphaBlendType", 0));    // Over
+	D3DXCOLOR neutralMultiply(1.0f, 1.0f, 1.0f, 1.0f);
+	D3DXCOLOR neutralScreen(0.0f, 0.0f, 0.0f, 0.0f);
+	V(g_effect->SetValue("multiplyColor", &neutralMultiply, sizeof(D3DXCOLOR)));
+	V(g_effect->SetValue("screenColor", &neutralScreen, sizeof(D3DXCOLOR)));
+	D3DXCOLOR whiteDiffuse(1.0f, 1.0f, 1.0f, 1.0f);
+	V(g_effect->SetValue("drawableDiffuse", &whiteDiffuse, sizeof(D3DXCOLOR)));
+	V(g_effect->SetBool("isPremultipliedAlpha", false));
+
 	// フルスクリーンクワッドで合成
 	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
 	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
@@ -903,6 +883,11 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 		back->GetDesc(&backDesc);
 		back->Release();
 	}
+
+	// OutputBufferTexelSize を合成先サイズに合わせて設定
+	D3DXVECTOR2 compositeTexelSize = D3DXVECTOR2(-1.0f / backDesc.Width, -1.0f / backDesc.Height);
+	V(g_effect->SetValue("OutputBufferTexelSize", &compositeTexelSize, sizeof(D3DXVECTOR2)));
+
 	TLVertex quad[4];
 	const float w = static_cast<float>(backDesc.Width);
 	const float h = static_cast<float>(backDesc.Height);
@@ -914,7 +899,17 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
 	V(g_dev->SetFVF(TL_FVF));
 
-    UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
+	// ハードウェアブレンドステート: シェーダー内で合成済みなので単純置換
+	V(g_dev->SetRenderState(D3DRS_LIGHTING, FALSE));
+	V(g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE));
+	V(g_dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE));
+	V(g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE));
+	V(g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE));
+	V(g_dev->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE));
+	V(g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO));
+	V(g_dev->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ZERO));
+
+	UINT32 passes; V(g_effect->Begin(&passes, 0)); V(g_effect->BeginPass(0));
 	V(g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
 	V(g_effect->EndPass()); V(g_effect->End());
 
