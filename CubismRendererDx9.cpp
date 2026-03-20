@@ -206,26 +206,34 @@ void CubismRendererDx9::TransferOffscreenBuffer(
 	V(effect->SetFloat("drawableOpacity", ownerOpacity));
 
 	// フルスクリーンクワッド（頂点カラーに不透明度適用）
-// 	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
-// 	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-// 	TLVertex quad[4];
-// 	const float w = static_cast<float>(dstDesc.Width);
-// 	const float h = static_cast<float>(dstDesc.Height);
-// 	const float ox = -0.5f, oy = -0.5f;
-// 	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
-// 	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
-// 	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
-// 	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
-// 	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
-// 	V(dev->SetFVF(TL_FVF));
-//
-// 	V(effect->SetBool("isPremultipliedAlpha", false));
-// 	setting->SetDrawSetting(dev);
-//
-// 	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
-// 	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
-// 	V(effect->EndPass()); V(effect->End);
+	struct TLVertex { float x, y, z, rhw; DWORD diffuse; float u, v; };
+	const DWORD TL_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+	TLVertex quad[4];
+	const float w = static_cast<float>(dstDesc.Width);
+	const float h = static_cast<float>(dstDesc.Height);
+	const float ox = -0.5f, oy = -0.5f;
+	DWORD vcol = D3DCOLOR_COLORVALUE(1.0f, 1.0f, 1.0f, 1.0f);
+	quad[0] = { 0.0f + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 0.0f, 0.0f };
+	quad[1] = { w    + ox, 0.0f + oy, 0.0f, 1.0f, vcol, 1.0f, 0.0f };
+	quad[2] = { 0.0f + ox, h    + oy, 0.0f, 1.0f, vcol, 0.0f, 1.0f };
+	quad[3] = { w    + ox, h    + oy, 0.0f, 1.0f, vcol, 1.0f, 1.0f };
+	V(dev->SetFVF(TL_FVF));
 
+	V(effect->SetBool("isPremultipliedAlpha", false));
+
+	// multiplyColor / screenColor をニュートラルにリセット
+	D3DXCOLOR neutralMultiply(1.0f, 1.0f, 1.0f, 1.0f);
+	D3DXCOLOR neutralScreen(0.0f, 0.0f, 0.0f, 0.0f);
+	V(effect->SetValue("multiplyColor", &neutralMultiply, sizeof(D3DXCOLOR)));
+	V(effect->SetValue("screenColor", &neutralScreen, sizeof(D3DXCOLOR)));
+	D3DXCOLOR whiteDiffuse(1.0f, 1.0f, 1.0f, 1.0f);
+	V(effect->SetValue("drawableDiffuse", &whiteDiffuse, sizeof(D3DXCOLOR)));
+
+	setting->SetDrawSetting(dev);
+
+	UINT32 passes; V(effect->Begin(&passes, 0)); V(effect->BeginPass(0));
+	V(dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TLVertex)));
+	V(effect->EndPass()); V(effect->End());
 
 	// 後処理
 	V(dev->SetTexture(0, NULL));
@@ -571,8 +579,7 @@ void CubismRendererDx9::DrawMasking(
 		V(g_effect->Begin(&xxxx, 0));
 		V(g_effect->BeginPass(0));
 		sort[i]->DrawMaskingMesh(g_dev);
-		V(g_effect->EndPass());
-		V(g_effect->End());
+		V(g_effect->EndPass()); V(g_effect->End());
 	}
 
 	RestoreProfile();
@@ -1439,7 +1446,6 @@ void OffscreenShaderSetting::SetDrawSetting(LPDIRECT3DDEVICE9 dev)
 		}
 	}
 }
-
 
 int OffscreenShaderSetting::GetMaskCount() { return masks.GetSize(); }
 int OffscreenShaderSetting::GetMask(int i) { return masks[i]; }
