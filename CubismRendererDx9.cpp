@@ -558,7 +558,6 @@ void CubismRendererDx9::DrawMasking(
 		diffuse.b *= modelDiffuse.b;
 		diffuse.a *= modelDiffuse.a;
 		V(g_effect->SetValue("drawableDiffuse", &diffuse, sizeof(D3DXCOLOR)));
-		V(g_effect->SetValue("baseColor", &diffuse, sizeof(D3DXCOLOR)));
 
 		csmVector4 multiColorCsm = GetModel()->GetDrawableMultiplyColor(sort[i]->GetDrawableIndex());
 		D3DXCOLOR multiColor = D3DXCOLOR(multiColorCsm.X, multiColorCsm.Y, multiColorCsm.Z, multiColorCsm.W);
@@ -756,9 +755,35 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 
 	// モデル全体の描画は専用オフスクリーンに行う
 	LPDIRECT3DSURFACE9 prevRT = nullptr; V(g_dev->GetRenderTarget(0, &prevRT));
-	// Begin scene 終了してからレンダターゲット切替
+	// Begin scene 終了してからRT操作・StretchRect を行う
 	V(g_dev->EndScene());
-	_modelOffscreen->BeginDraw(g_dev, true, D3DCOLOR_ARGB(0,0,0,0));
+
+	// 背景（現在のRT内容）をモデル用バッファに複製する
+	// StretchRect は BeginScene 外で呼ぶ必要があるためここで実施
+	if (prevRT && _modelOffscreen && _modelOffscreen->IsValid())
+	{
+		LPDIRECT3DSURFACE9 modelSurf = _modelOffscreen->GetSurface();
+		D3DSURFACE_DESC srcDesc; prevRT->GetDesc(&srcDesc);
+		if (srcDesc.MultiSampleType != D3DMULTISAMPLE_NONE)
+		{
+			// MSAA サーフェスは直接テクスチャへコピーできないため一旦解決してからコピー
+			LPDIRECT3DSURFACE9 tmp = nullptr;
+			if (SUCCEEDED(g_dev->CreateRenderTarget(srcDesc.Width, srcDesc.Height, srcDesc.Format,
+				D3DMULTISAMPLE_NONE, 0, FALSE, &tmp, NULL)) && tmp)
+			{
+				V(g_dev->StretchRect(prevRT, nullptr, tmp, nullptr, D3DTEXF_NONE));
+				V(g_dev->StretchRect(tmp, nullptr, modelSurf, nullptr, D3DTEXF_NONE));
+				tmp->Release();
+			}
+		}
+		else
+		{
+			V(g_dev->StretchRect(prevRT, nullptr, modelSurf, nullptr, D3DTEXF_NONE));
+		}
+	}
+
+	// クリアせずに開始（背景がバッファに入っている）
+	_modelOffscreen->BeginDraw(g_dev, false, 0);
 	V(g_dev->BeginScene());
 
     // 描画情報を Drawable と Offscreen で分離して保持
@@ -846,18 +871,22 @@ void CubismRendererDx9::AddColorOnElement(CubismIdHandle ID, float opa, float r,
 		TransferOffscreenBuffer(g_dev, g_effect, _offscreenBuffers, _offscreenSettings, GetModel(), s_ActiveOffscreenIndex);
     }
 
+	// シーンを終了してからRT切替・コピーを行う
+	// （StretchRect はBeginScene外で呼ぶ必要がある）
+	V(g_dev->EndScene());
+
 	// モデル全体バッファを閉じる
 	_modelOffscreen->EndDraw(g_dev);
 
-	// 元のRTに戻して合成（モデルカラーのAlphaで半透明）
+	// 元のRTに戻す
 	V(g_dev->SetRenderTarget(0, prevRT));
 	if (prevRT) { prevRT->Release(); }
 
-	// comoposite pass
-	V(g_dev->BeginScene());
-
-	// 現在のバッファ内容をコピー（必要なら）
+	// 現在のバッファ内容（背景）をBeginScene外でコピー
 	CopyCurrentRTToTexture(g_dev);
+
+	// composite pass
+	V(g_dev->BeginScene());
 
 	LPDIRECT3DTEXTURE9 texModel = _modelOffscreen->GetTexture();
 	V(g_effect->SetTexture("TexMain", texModel));
@@ -996,9 +1025,12 @@ void CubismRendererDx9::DrawDrawable(DrawableShaderSetting* drawableSetting)
 	V(g_effect->SetInt("alphaBlendType", drawableSetting->GetAlphaBlendType()));
 
 	// usedSelfBuffer が真なら現在のRTをテクスチャコピーして渡す
+	// StretchRect は BeginScene 外で呼ぶ必要があるため EndScene/BeginScene で挟む
 	if (drawableSetting->GetUsedSelfBuffer())
 	{
+		V(g_dev->EndScene());
 		CopyCurrentRTToTexture(g_dev);
+		V(g_dev->BeginScene());
 		V(g_effect->SetTexture("OutputBuffer", s_rtCopyTex));
 		V(g_effect->SetBool("useOutBuffer", true));
 	}
